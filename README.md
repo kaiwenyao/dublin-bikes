@@ -4,7 +4,7 @@
 
 ```
 dublin-bikes/
-├── backend/      # Spring Boot (Java 17, Maven)
+├── backend/      # Spring Boot (Java 21, Maven)
 │   ├── src/
 │   └── pom.xml
 ├── frontend/     # 前端工程 (待初始化)

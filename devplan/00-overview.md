@@ -1,5 +1,14 @@
 # Dublin Bikes — Flask → Spring Boot 重构开发文档
 
+> **路径说明（2026-05-21 仓库重构后）**
+> 仓库已改为 monorepo 结构：根目录下分 `backend/`（Spring Boot）和 `frontend/` 两个独立工程。
+> 后续文档中出现的 `src/main/...`、`pom.xml`、`application.yaml` 等路径，**实际位置统一前缀 `backend/`**，例如：
+> - `src/main/java/dev/kaiwen/bikes/` → `backend/src/main/java/dev/kaiwen/bikes/`
+> - `src/main/resources/application.yaml` → `backend/src/main/resources/application.yaml`
+> - `pom.xml` → `backend/pom.xml`
+>
+> Java 包名 `dev.kaiwen.bikes.*` 不受影响。Maven 命令需在 `backend/` 下执行。
+
 ## 0. 文档导航
 
 | 文件 | 内容 |
