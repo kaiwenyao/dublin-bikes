@@ -1,0 +1,163 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;500;600;700&family=Poppins:wght@400;500;600;700&display=swap');
+
+@layer base {
+  :root {
+    /* UCDSE Platform Design System - Glassmorphism Style */
+    /* #FFFFFF | #00171F | #003459 | #007EA7 | #00A8E8 */
+    --background: 0 0% 100%; /* #FFFFFF */
+    --foreground: 196 100% 6%; /* #00171F */
+    --card: 0 0% 100%;
+    --card-foreground: 196 100% 6%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 196 100% 6%;
+    --primary: 197 100% 45%; /* #00A8E8 */
+    --primary-foreground: 0 0% 100%;
+    --secondary: 195 100% 33%; /* #007EA7 */
+    --secondary-foreground: 0 0% 100%;
+    --muted: 197 40% 92%;
+    --muted-foreground: 205 100% 17%; /* #003459 */
+    --accent: 205 100% 17%; /* #003459 */
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 197 50% 82%;
+    --input: 197 50% 82%;
+    --ring: 197 100% 45%;
+    --radius: 0.75rem;
+
+    /* Glassmorphism Variables */
+    --glass-bg: rgba(255, 255, 255, 0.85);
+    --glass-border: rgba(0, 168, 232, 0.2);
+    --glass-shadow: 0 8px 32px rgba(0, 168, 232, 0.12);
+  }
+
+  .dark {
+    --background: 196 100% 6%; /* #00171F */
+    --foreground: 0 0% 100%;
+    --card: 205 100% 17%; /* #003459 */
+    --card-foreground: 0 0% 100%;
+    --popover: 205 100% 17%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 197 100% 45%; /* #00A8E8 */
+    --primary-foreground: 196 100% 6%;
+    --secondary: 195 100% 33%; /* #007EA7 */
+    --secondary-foreground: 0 0% 100%;
+    --muted: 205 60% 25%;
+    --muted-foreground: 197 60% 75%;
+    --accent: 197 100% 45%;
+    --accent-foreground: 196 100% 6%;
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 205 50% 28%;
+    --input: 205 50% 28%;
+    --ring: 197 100% 45%;
+
+    /* Dark Mode Glassmorphism */
+    --glass-bg: rgba(0, 23, 31, 0.85);
+    --glass-border: rgba(0, 168, 232, 0.25);
+    --glass-shadow: 0 8px 32px rgba(0, 168, 232, 0.15);
+  }
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+  html {
+    /* Always reserve space for scrollbar to avoid Header position shifting between pages with/without scrollbar */
+    scrollbar-gutter: stable;
+  }
+  body {
+    font-family: 'Open Sans', system-ui, sans-serif;
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Poppins', system-ui, sans-serif;
+  }
+}
+
+/* Glassmorphism Utility Classes */
+@layer components {
+  .glass {
+    background: var(--glass-bg);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+  }
+
+  .glass-card {
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+    border-radius: var(--radius);
+  }
+
+  .glass-input {
+    background: rgba(255, 255, 255, 0.5);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid hsl(var(--border));
+    transition: all 0.2s ease;
+  }
+
+  .glass-input:focus {
+    background: rgba(255, 255, 255, 0.8);
+    border-color: hsl(var(--primary));
+    box-shadow: 0 0 0 3px hsl(var(--primary) / 0.1);
+  }
+
+  .dark .glass-input {
+    background: rgba(30, 20, 50, 0.5);
+  }
+
+  .dark .glass-input:focus {
+    background: rgba(30, 20, 50, 0.8);
+  }
+
+  /* Gradient Background */
+  .bg-gradient-primary {
+    background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--secondary)) 100%);
+  }
+
+  /* Button Glow Effect */
+  .btn-glow {
+    position: relative;
+    overflow: hidden;
+    transition: all 0.3s ease;
+  }
+
+  .btn-glow::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, transparent 0%, rgba(255,255,255,0.2) 50%, transparent 100%);
+    transform: translateX(-100%);
+    transition: transform 0.5s ease;
+  }
+
+  .btn-glow:hover::before {
+    transform: translateX(100%);
+  }
+
+  /* Skeleton Loading */
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--muted)) 0%,
+      hsl(var(--muted-foreground) / 0.1) 50%,
+      hsl(var(--muted)) 100%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes skeleton-pulse {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+}
