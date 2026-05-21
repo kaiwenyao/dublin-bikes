@@ -190,6 +190,16 @@
 - 决策：复刻 Flask 现状，不"修正"为列默认 false。
 - 理由：现存生产数据可能依赖该列默认值（比如外部脚本直接 INSERT），改默认值会回归测试不到的灰盒副作用。
 
+**ADR-006 Python `chat-service` Web 框架选用 FastAPI**
+- 决策：裸 **FastAPI + `sse-starlette`**，不使用 Flask、不使用 LangServe。
+- 理由：
+  1. 原生 `async/await` 与 LangChain `astream`、`ainvoke` 零摩擦；Flask 的 sync WSGI 模型在流式输出时需要额外 worker/线程绕路。
+  2. `sse-starlette.EventSourceResponse` 一行起 SSE，且能严格控制事件体格式 —— 必须输出 `data: {"content":"..."}\n\n` … `data: [DONE]\n\n` 才能让 Spring 端透传给现有前端零改动。
+  3. Pydantic 模型直接给出 `/openapi.json`，方便 Spring `ChatServiceClient` 对齐 DTO 字段。
+  4. LangServe 虽然是 LangChain 官方 FastAPI 适配器，但它把端点路径和事件协议都框死（`/invoke`、`/stream` + 自有事件 schema），与本项目自定义 `data: {"content":...}` 契约不兼容；放弃。
+  5. Django / Litestar 在本场景（4 个端点的薄微服务）属于过度选型。
+- 代价：团队需熟悉 async Python；好在 chat-service 本身只有 ~150 行，学习成本可控。
+
 ---
 
 ## D. 完工 Checklist（迁移结束自查）
