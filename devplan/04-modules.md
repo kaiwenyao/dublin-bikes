@@ -1,0 +1,497 @@
+# 04 — 业务模块详解
+
+> 所有模块以 **保持 API 完全兼容** 为铁律。本文件按 模块 / 端点 / 请求 / 响应 / Service 关键逻辑 / 关键注意点 组织。来源已在每节标注 Flask 源文件路径。
+
+---
+
+## 1. Station 模块
+
+源：`flask-app/app/api/station_routes.py`、`app/services/station_service.py`
+
+### 1.1 端点
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/stations/` | 全部站点元数据 |
+| GET | `/api/stations/{number}/availability` | 该站点过去 1 天的可用性记录 |
+| GET | `/api/stations/status` | 所有站点最新一条 availability |
+| GET | `/api/stations/{number}/prediction` | 未来若干小时的可用车辆预测（委托 Prediction 模块） |
+
+### 1.2 响应（保持原格式）
+
+`/api/stations/`：
+```json
+{"code":0,"msg":"ok","data":[
+  {"number":1,"contract_name":"dublin","name":"...","address":"...",
+   "latitude":53.34,"longitude":-6.26,"banking":true,"bonus":false,
+   "bike_stands":40}
+]}
+```
+`/api/stations/{n}/availability`：
+```json
+{"code":0,"msg":"ok","data":[
+  {"number":1,"available_bikes":12,"available_bike_stands":28,
+   "status":"OPEN","last_update":1770047175000,
+   "timestamp":"2025-01-20T10:00:00","requested_at":"2025-01-20T10:00:05"}
+]}
+```
+
+### 1.3 关键查询（JPA）
+
+- 列表：`stationRepository.findAllByOrderByNumberAsc()`
+- 近一天历史：
+  ```java
+  @Query("""
+      SELECT a FROM Availability a
+      WHERE a.number = :number AND a.timestamp >= :since
+      ORDER BY a.timestamp DESC""")
+  List<Availability> findRecent(int number, LocalDateTime since);
+  ```
+  其中 `since = LocalDateTime.now().minusDays(1)`。
+- 所有站点最新一条（**N+1 必须避免**）：用 group-by 子查询，参考 Flask `get_all_stations_latest_availability` 的实现（按 `MAX(timestamp) GROUP BY number` 后 join）。
+
+```java
+@Query(value = """
+    SELECT a.* FROM availability a
+    INNER JOIN (
+        SELECT number, MAX(timestamp) AS max_ts
+        FROM availability
+        GROUP BY number
+    ) latest
+    ON a.number = latest.number AND a.timestamp = latest.max_ts
+    """, nativeQuery = true)
+List<Availability> findLatestPerStation();
+```
+
+### 1.4 异常映射
+
+- station not found → `{"code":1,"msg":"station not found","data":null}` HTTP 404（保持原状）
+- 注意 Flask 在 station 模块用的是 `code: 1`，不是 `40901` 等；不要"统一化"它。
+
+---
+
+## 2. Weather 模块
+
+源：`flask-app/app/api/weather_routes.py`、`app/services/weather_service.py`
+
+### 2.1 端点
+
+| 方法 | 路径 |
+|---|---|
+| GET | `/api/weather` |
+
+### 2.2 响应（兼容 OneCall API）
+
+```json
+{"code":0,"msg":"ok","data":{
+  "current": {
+    "dt": 1737378000, "temp": 4.5, "feels_like": 1.2,
+    "pressure": 1019, "humidity": 78, "uvi": 0.3,
+    "clouds": 90, "visibility": 10000,
+    "wind_speed": 5.4, "wind_deg": 240,
+    "weather": [{"id": 803, "description": "broken clouds", "icon": "04d"}]
+  },
+  "hourly": [
+    {"dt": 1737381600, "temp": 4.7}
+  ]
+}}
+```
+
+### 2.3 Service 关键点
+
+- 数据来源：本表 `weather_forecast`（已有外部进程写入）。
+- 取数：`forecast_time >= 当前小时` 升序，limit 6（current + 5 hourly）。
+- 若空，返回 `code=50001 msg="No weather data available in database"` HTTP 404。
+
+```java
+List<WeatherForecast> rows = weatherRepository
+    .findTop6ByForecastTimeGreaterThanEqualOrderByForecastTimeAsc(
+        LocalDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.HOURS));
+if (rows.isEmpty()) throw new BusinessException(50001, "No weather data available in database", 404);
+```
+
+### 2.4 DTO
+
+直接组装成上述 JSON 形态；用 `@JsonInclude(JsonInclude.Include.ALWAYS)` 保留 `null` 字段。
+
+---
+
+## 3. Journey 模块
+
+源：`flask-app/app/api/journey_routes.py`、`app/services/journey_service.py`、`app/utils/calculateDistance.py`、`app/utils/api_retry.py`
+
+### 3.1 端点
+
+| 方法 | 路径 |
+|---|---|
+| POST | `/api/journey/plan` |
+
+### 3.2 请求（两种互斥形态）
+
+A. 地址：
+```json
+{"start_address":"O'Connell Street, Dublin","end_address":"UCD Belfield"}
+```
+B. 坐标：
+```json
+{"start":{"lat":53.34,"lon":-6.26},"end":{"lat":53.33,"lon":-6.25}}
+```
+
+### 3.3 响应
+
+```json
+{"code":0,"msg":"ok","data":{
+  "start_station": {"number":1,"name":"...","walking_time":120,"available_bikes":5},
+  "end_station":   {"number":42,"name":"...","walking_time":180,"available_bike_stands":7},
+  "cycling_route": {"cycling_time": 540},
+  "total_duration": 840
+}}
+```
+若无可行路线：`{"code":404,"msg":"no available route","data":null}` HTTP 404。
+
+### 3.4 算法（端口 Flask 现有实现，**不要重新设计**）
+
+1. 取最近 1 小时内每个站点的最新 availability（`MAX(timestamp) GROUP BY number`）；排除 `status != "OPEN"` 或时间戳早于 30 分钟前。
+2. 按 Haversine 距离起点排序，取前 10 候选起点站（要求 `available_bikes > 0`），同理取 10 候选终点站（要求 `available_bike_stands > 0`）。
+3. **批量调用** Google Distance Matrix（walking 模式），把起点到 10 个候选起点站的真实步行时间算出，按真实步行时间排序，取前 5；终点同理。
+4. 对 5×5=25 个组合，**批量调用** Distance Matrix（bicycling 模式），构造 5×5 矩阵。
+5. 全局最小化 `walk1 + cycle + walk2`，跳过 `start_station == end_station`。
+6. 返回最优组合。
+
+### 3.5 Google Maps 客户端
+
+- 用 `RestClient`（Spring 6）直接打 REST API；不要引入 `google-maps-services-java` 以减少依赖。
+- 重试装饰：复刻 `gmaps_retry`（指数退避，max_retries 默认 2）。可用 Resilience4j `@Retry` 注解：
+  ```java
+  @Retry(name = "gmaps", fallbackMethod = "gmapsFallback")
+  public DistanceMatrixResult distanceMatrix(...) { ... }
+  ```
+- `Geocoding`：`/maps/api/geocode/json?address=...`
+- `Distance Matrix`：`/maps/api/distancematrix/json?origins=lat,lon|lat,lon&destinations=...&mode=walking|bicycling`
+
+### 3.6 距离工具
+
+`DistanceUtils.haversineKm(lat1, lon1, lat2, lon2)`，端口 `calculate_distance` 直译；R=6371，注意对 `a` clamp 到 [0, 1] 防浮点越界。
+
+---
+
+## 4. User / Auth 模块
+
+源：`flask-app/app/api/user_routes.py`、`app/services/user_service.py`、`app/contracts/{request,response}.py`、`app/utils/email.py`、`app/templates/email_verification.html`
+
+### 4.1 端点
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/users/register` | 注册 |
+| POST | `/api/users/send-verification-code` | 发送/重发 6 位激活码 |
+| POST | `/api/users/activate` | 用激活码激活 |
+| POST | `/api/users/activate-by-token` | 用邮件 token 激活 |
+| POST | `/api/users/login` | 登录 |
+| POST | `/api/users/refresh` | 刷新 token |
+| POST | `/api/users/logout` | 登出（递增 `token_version`） |
+| GET | `/api/users/me` | 当前用户信息（Authorization: Bearer） |
+
+### 4.2 关键请求 DTO（Bean Validation）
+
+```java
+public record UserRegistrationRequestDTO(
+    @NotBlank @Size(min=3, max=64)
+    @Pattern(regexp="^[A-Za-z0-9_.-]+$",
+             message="username can only contain letters, numbers, '_', '-' and '.'.")
+    String username,
+
+    @NotBlank @Size(max=120)
+    @Pattern(regexp="^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$",
+             message="email format is invalid.")
+    String email,
+
+    @NotBlank @Size(min=8, max=128) String password,
+
+    @Size(max=255) String avatarUrl
+) {}
+```
+> Controller 必须在反序列化前 normalize：`username.trim()`、`email.strip().toLowerCase()`。建议在 DTO 之外的辅助层做。
+
+### 4.3 JWT 设计（**严格复刻 Flask 实现**）
+
+- 两个独立密钥：`access` 与 `refresh`，HS256。
+- payload：
+  ```json
+  {"sub":"<user_id>","ver":<token_version>,"type":"access|refresh","iat":...,"exp":...}
+  ```
+- `verifyAccessToken` 必须额外校验：
+  1. `type == "access"`
+  2. 从数据库 reload 用户、对比 `payload.ver == user.token_version`
+  3. `user.is_active == true`
+- `logout`：`user.token_version += 1` → 所有旧 token 立即失效。
+- 配合 Spring Security：自定义 `JwtAuthenticationFilter extends OncePerRequestFilter`，把通过校验的用户写入 `SecurityContextHolder`。
+
+### 4.4 邮件发送
+
+- 模板：复制 `flask-app/templates/email_verification.html` 到 `src/main/resources/templates/email_verification.html`，把 `{code}` → `[[${code}]]`、`{expires_minutes}` → `[[${expiresMinutes}]]`、`{activation_link_section}` → Thymeleaf 条件块。
+- 主题：`[Dublin Bikes] Verify your email to start riding`（与 Flask 完全一致）。
+- 异步：`@Async("mailExecutor")`；`AsyncConfig` 暴露线程池（core=2, max=2, queue=100, name-prefix=`email-send-`）。
+- 未配置 SMTP 时静默跳过（与 Flask 行为一致），但 INFO 级 log 记录"mail not configured, skip"。
+
+### 4.5 注册流程要点
+
+1. 解析、校验 DTO。
+2. 检查 username / email 是否重复 → 抛 `BusinessException(40901/40902, ..., 409)`。
+3. `passwordEncoder.encode(password)`（BCrypt，cost=10）。
+4. 持久化 User，**强制 `isActive=false`**（覆盖列默认）；不生成验证码（验证码通过 `send-verification-code` 端点单独申请）。
+5. 返回 `UserVO`：`{id, username, email, avatar_url, is_active=false, created_at}`。
+
+### 4.6 验证码与激活
+
+- 生成：6 位随机数字 + 64 字符随机 token（`secrets.token_urlsafe(48)` ≈ `Base64Url` 截断 64；Java 端用 `SecureRandom` + Base64URL）。
+- 写库：`email_verification_code`、`email_verification_code_expires_at = now + 5min`、`email_verification_code_sent_at = now`、`activation_token`。
+- 60 秒重发节流：`now < sent_at + 60s` → 401 `verification code can only be requested once per minute`（保留 Flask 文案）。
+- 激活成功：清空三个 code 字段、`is_active=true`，**不要** 增加 `token_version`。
+
+### 4.7 错误码映射
+
+| 场景 | code | HTTP |
+|---|---|---|
+| DTO 校验失败 | 40001 | 400 |
+| auth 失败（token / code 错误、过期、节流） | 40101 | 401 |
+| username 已存在 | 40901 | 409 |
+| email 已存在 | 40902 | 409 |
+| user 其他冲突 | 40903 | 409 |
+
+---
+
+## 5. Chat 模块
+
+源：`flask-app/app/api/chat_routes.py`、`app/services/chat_service.py`、`app/models/{chat_history,session}.py`
+
+### 5.1 端点
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/chat/` | 普通同步响应 |
+| POST | `/api/chat/stream` | SSE 流式响应 |
+| GET | `/api/chat/sessions` | 当前用户会话列表 |
+| GET | `/api/chat/sessions/{session_id}/messages` | 会话历史消息 |
+
+全部需要 `Authorization: Bearer <access_token>`。
+
+### 5.2 请求/响应
+
+POST `/api/chat/`:
+```json
+// req
+{"message":"...", "chat_id":"default"}
+// resp
+{"code":0,"msg":"ok","data":{"chat_id":"default","reply":"..."}}
+```
+
+POST `/api/chat/stream`: `Content-Type: text/event-stream`，每段
+```
+data: {"content":"..."}\n\n
+```
+结束：`data: [DONE]\n\n`。响应 header：
+```
+X-Accel-Buffering: no
+Cache-Control: no-cache
+Connection: keep-alive
+```
+
+### 5.3 会话 ID 生成（**复刻**）
+
+```java
+String prefix = "user_" + userId + "_chat_";
+String candidate = prefix + chatId;
+boolean validChatId = chatId.matches("[A-Za-z0-9_.-]+");
+String sessionId = (candidate.length() <= 64 && validChatId)
+    ? candidate
+    : prefix + "h_" + sha256Hex(chatId).substring(0, 32);
+```
+
+### 5.4 LLM 调用（LangChain4j）
+
+```java
+@Bean
+public OpenAiStreamingChatModel qwenStreamingModel(AliyunQwenProperties p) {
+    return OpenAiStreamingChatModel.builder()
+        .apiKey(p.apiKey()).baseUrl(p.baseUrl())
+        .modelName(p.chatModel()).build();
+}
+```
+
+- 同步：`chatModel.chat(messages)`
+- 流式：`streamingChatModel.chat(messages, handler)`，`handler` 每 token 写入 SSE 响应（`SseEmitter` 或 `ResponseBodyEmitter`）。
+- 历史：自定义 `ChatMemoryStore`，从 `message_store` 读 JSON、反序列化为 LangChain4j `ChatMessage`。
+- 写入：每次对话结束后，把 user message + ai message 以 LangChain 兼容 JSON 写回 `message_store`（**字段名 / type 值必须与 Python 端一致**，否则 Python 端不再可用）。
+
+### 5.5 会话表维护
+
+- `_ensureSession`：upsert `sessions(id, user_id)`，`updated_at = utcnow()`。
+- 并发竞争：先 `findById`、不存在则 insert；捕获 `DataIntegrityViolationException` 后重读。
+- 标题生成：首条消息后调用 Qwen `qwen-plus`：
+  ```
+  "Summarize the topic of this sentence in 6 words or less, output only the title without punctuation: {first_message[:200]}"
+  ```
+  取前 50 字符写入 `sessions.title`。异常吞掉、log warn。
+
+### 5.6 历史接口
+
+`GET /api/chat/sessions/{id}/messages` → `[{role, content}]`，role 映射：
+- `human` → `user`
+- `ai` → `assistant`
+- `system` / `tool` 原样
+
+session 不存在或不属于当前用户 → `{"code":404, "msg":"session not found", "data":null}` HTTP 404。
+
+---
+
+## 6. Prediction 模块
+
+源：`flask-app/app/services/prediction_service.py`、`flask-app/machine_learning/{bike_availability_model.pkl, model_features.pkl}`
+
+### 6.1 端点（沿用 station 模块路径）
+
+| 方法 | 路径 |
+|---|---|
+| GET | `/api/stations/{number}/prediction` |
+
+### 6.2 响应
+
+```json
+{"code":0,"msg":"ok","data":[
+  {"forecast_time":"2025-01-20T11:00:00","predicted_available_bikes":18},
+  {"forecast_time":"2025-01-20T12:00:00","predicted_available_bikes":15}
+]}
+```
+
+### 6.3 模型加载方案选型
+
+| 方案 | 优点 | 缺点 | 推荐场景 |
+|---|---|---|---|
+| **A. 独立 Python 微服务** | 零移植成本；模型保留 sklearn 原生 | 需要部署 Python 进程 | ✅ 首选 |
+| B. ONNX 导出 + onnxruntime-java | 单 JVM 部署 | 需要重新 export 模型；版本契约 | 备选 |
+| C. JPMML / pmml4s | 老 sklearn 兼容 | 不一定支持模型用到的所有 transformer | 仅当模型很简单时 |
+
+**采用方案 A**：
+
+```python
+# prediction-service/main.py  (新仓库或子目录)
+from fastapi import FastAPI
+import pickle, pandas as pd
+
+app = FastAPI()
+model = pickle.load(open("bike_availability_model.pkl","rb"))
+features = pickle.load(open("model_features.pkl","rb"))
+
+@app.post("/predict")
+def predict(payload: dict):
+    df = pd.DataFrame(payload["rows"])[features]
+    return {"predictions": [int(round(x)) for x in model.predict(df)]}
+```
+
+Spring 端：
+```java
+@Service
+public class PredictionService {
+    public List<PredictionPointVO> predict(int stationNumber) {
+        Station station = stationRepo.findById(stationNumber)
+            .orElseThrow(() -> new BusinessException(1, "Station "+stationNumber+" not found", 400));
+        List<WeatherForecast> forecasts = weatherRepo
+            .findByForecastTimeGreaterThanEqualOrderByForecastTimeAsc(
+                LocalDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.HOURS));
+        if (forecasts.isEmpty())
+            throw new BusinessException(1, "No weather forecast data available to make predictions", 400);
+
+        List<Map<String,Object>> rows = forecasts.stream()
+            .map(f -> buildFeatureRow(station, f)).toList();
+
+        var resp = restClient.post().uri("/predict").body(Map.of("rows", rows))
+            .retrieve().body(PredictResp.class);
+
+        return zipAndClamp(forecasts, resp.predictions(), station.getBikeStands());
+    }
+}
+```
+
+### 6.4 特征行（**字段名与训练保持一致**）
+
+```java
+Map.of(
+  "station_id", station.getNumber(),
+  "capacity",   station.getBikeStands(),
+  "lat",        station.getLatitude(),
+  "lon",        station.getLongitude(),
+  "hour",       f.getForecastTime().getHour(),
+  "day",        f.getForecastTime().getDayOfMonth(),
+  "day_of_week",f.getForecastTime().getDayOfWeek().getValue() - 1,  // Mon=0..Sun=6
+  "is_weekend", f.getForecastTime().getDayOfWeek().getValue() >= 6 ? 1 : 0,
+  "avg_temperature", f.getTemperature(),
+  "avg_humidity",    f.getHumidity(),
+  "avg_pressure",    f.getPressure()
+);
+```
+
+### 6.5 输出 clamp
+
+`predicted_bikes = max(0, min(round(pred), station.bike_stands))` —— 与 Flask 一致。
+
+### 6.6 启动预热
+
+- Flask 在 `create_app` 时调用 `_load_model()` 预热（避免首请求慢）。
+- Spring 端：Python 微服务自身在启动时 `pickle.load` 已完成；Spring 启动期可发一次健康探活：
+  ```java
+  @EventListener(ApplicationReadyEvent.class)
+  void warmup() {
+      try { restClient.get().uri("/health").retrieve().toBodilessEntity(); }
+      catch (Exception e) { log.warn("prediction service warmup failed", e); }
+  }
+  ```
+
+---
+
+## 7. Cross-cutting
+
+### 7.1 CORS
+
+Flask 项目没有显式 CORS 配置（依赖部署反代或 Browser SOP），Spring 端建议显式：
+
+```java
+@Configuration
+public class CorsConfig {
+    @Bean
+    public WebMvcConfigurer corsConfigurer() {
+        return new WebMvcConfigurer() {
+            @Override
+            public void addCorsMappings(CorsRegistry registry) {
+                registry.addMapping("/api/**")
+                        .allowedOriginPatterns("http://localhost:*", "https://*.your-domain.com")
+                        .allowedMethods("GET","POST","PUT","DELETE","OPTIONS")
+                        .allowedHeaders("*")
+                        .allowCredentials(true);
+            }
+        };
+    }
+}
+```
+
+### 7.2 安全过滤器链（最简）
+
+```java
+@Bean
+SecurityFilterChain filter(HttpSecurity http, JwtAuthenticationFilter jwt) throws Exception {
+    http.csrf(c -> c.disable())
+        .sessionManagement(s -> s.sessionCreationPolicy(STATELESS))
+        .authorizeHttpRequests(a -> a
+            .requestMatchers(
+                "/api/stations/**", "/api/weather/**", "/api/journey/**",
+                "/api/users/register", "/api/users/send-verification-code",
+                "/api/users/activate", "/api/users/activate-by-token",
+                "/api/users/login", "/api/users/refresh",
+                "/actuator/health").permitAll()
+            .requestMatchers("/api/users/me", "/api/users/logout",
+                             "/api/chat/**").authenticated()
+            .anyRequest().denyAll())
+        .addFilterBefore(jwt, UsernamePasswordAuthenticationFilter.class);
+    return http.build();
+}
+```
