@@ -13,7 +13,7 @@
 │  Entity      (@Entity)                    │ — 持久化模型
 └──────────────────────────────────────────┘
        │
-       └──── Integration (RestClient / Mail / LLM)
+       └──── Integration (RestClient / Mail / Python services: chat-service, prediction-service)
 ```
 
 - Controller **只做** 参数绑定、校验触发、调用 Service、响应封装。
@@ -47,7 +47,7 @@ dev.kaiwen.bikes
 │       ├── MailProperties.java
 │       ├── GoogleMapsProperties.java
 │       ├── OpenWeatherProperties.java
-│       ├── AliyunQwenProperties.java
+│       ├── ChatServiceProperties.java        // 调 Python chat-service 的 base-url / 超时
 │       ├── VerificationProperties.java
 │       └── PredictionProperties.java
 ├── station/
@@ -100,20 +100,17 @@ dev.kaiwen.bikes
 │   └── dto/PredictionPointVO.java
 └── chat/
     ├── ChatController.java
-    ├── ChatService.java
-    ├── SessionService.java
-    ├── integration/QwenChatClient.java      // LangChain4j ChatLanguageModel
-    ├── memory/JdbcChatMemoryStore.java      // 读写 message_store
+    ├── ChatService.java                     // JWT/ACL/sessions 表维护 + 调用 chat-service
+    ├── SessionService.java                  // sessions 表 CRUD（仅 Spring 端拥有）
+    ├── integration/ChatServiceClient.java   // 调 Python chat-service：sync / stream / history / title
     ├── domain/
-    │   ├── ChatSession.java                 // 表 sessions
-    │   └── ChatMessage.java                 // 表 message_store
+    │   └── ChatSession.java                 // 表 sessions（message_store 由 Python 独占，Spring 不映射）
     ├── ChatSessionRepository.java
-    ├── ChatMessageRepository.java
     └── dto/
         ├── ChatRequest.java
         ├── ChatReplyVO.java
         ├── ChatSessionVO.java
-        └── ChatMessageVO.java
+        └── ChatMessageVO.java               // 仅 history 接口出参，结构与 chat-service 返回一致
 ```
 
 > 站点预测接口 `/api/stations/{number}/prediction` 仍由 `StationController` 暴露，内部委托给 `PredictionService` —— 路径与 Flask 保持一致。

@@ -4,12 +4,14 @@
 
 ```
 dublin-bikes/
-├── backend/      # Spring Boot (Java 21, Maven)
+├── backend/         # Spring Boot (Java 21, Maven)
 │   ├── src/
 │   └── pom.xml
-├── frontend/     # 前端工程 (待初始化)
+├── frontend/        # 前端工程 (待初始化)
 │   └── ...
-├── devplan/      # 开发文档
+├── chat-service/    # 独立 Python LLM 微服务 (FastAPI + LangChain + Qwen，S5 落地)
+│   └── ...
+├── devplan/         # 开发文档
 ├── .gitignore
 └── README.md
 ```
@@ -30,6 +32,10 @@ cd backend
 ## Frontend
 
 待初始化。建议在 `frontend/` 下 `npm create vite@latest .`（或 `pnpm create next-app` 等），选定框架后补充本节。
+
+## Chat Service (Python)
+
+独立 Python 微服务，承担所有 LLM 逻辑（LangChain + Qwen + `message_store` 读写）。S5 阶段创建，详见 [devplan/04-modules.md §5.7](./devplan/04-modules.md)。
 
 ## 开发文档
 

@@ -114,29 +114,29 @@ spring:
 
 ### 2.6 LLM（S5）
 
-**方案 A（推荐）：LangChain4j**
+> **决策**：LLM 调用走 **独立 Python `chat-service`**（LangChain + Qwen），Spring 端 **不引入任何 Java LLM SDK**（不需要 LangChain4j、Spring AI）。
+>
+> 详见 ADR-002（`05-testing-and-roadmap.md` §C）。
+
+Spring 端依赖：
 ```xml
+<!-- 同步调用 chat-service（沿用 §2.5 的 RestClient，无新依赖） -->
+<!-- SSE 转发：用 Spring 6 内置 RestClient + SseEmitter 或 WebClient + WebFlux -->
 <dependency>
-    <groupId>dev.langchain4j</groupId>
-    <artifactId>langchain4j-spring-boot-starter</artifactId>
-    <version>1.0.1</version>
-</dependency>
-<dependency>
-    <!-- 阿里云通义 Qwen 兼容 OpenAI 协议 -->
-    <groupId>dev.langchain4j</groupId>
-    <artifactId>langchain4j-open-ai-spring-boot-starter</artifactId>
-    <version>1.0.1</version>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-webflux</artifactId>
+    <!-- 仅当选择 WebClient 转发 SSE 时引入；用 JDK HttpClient + SseEmitter 则不需要 -->
 </dependency>
 ```
 
-**方案 B：Spring AI（OpenAI 兼容）**
-```xml
-<dependency>
-    <groupId>org.springframework.ai</groupId>
-    <artifactId>spring-ai-openai-spring-boot-starter</artifactId>
-</dependency>
-```
-选其一，不要同时引入。
+Python `chat-service` 依赖（独立工程，不在 `backend/pom.xml`）：
+- `fastapi`, `uvicorn[standard]`
+- `langchain`, `langchain-community`（提供 `SQLChatMessageHistory`）
+- `langchain-openai`（Qwen 走 OpenAI 兼容协议）
+- `sqlalchemy`, `pymysql` 或 `mysqlclient`
+- `sse-starlette`（SSE 响应）
+
+详细服务规格见 `04-modules.md` §5.7。
 
 ### 2.7 测试
 ```xml
@@ -268,17 +268,20 @@ app:
     base-url: ${OPENWEATHER_API_BASE_URL:https://api.openweathermap.org/data/3.0/onecall}
     api-key: ${OPENWEATHER_API_KEY:}   # 仅占位，运行时不再调用外部接口
 
-  aliyun-qwen:
-    api-key: ${ALIYUN_API_KEY}
-    base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
-    chat-model: qwen-plus
-    title-model: qwen-plus
+  chat-service:
+    base-url: ${CHAT_SERVICE_BASE_URL:http://localhost:8002}
+    connect-timeout-ms: 3000
+    read-timeout-ms: 30000          # 同步对话：单次响应可能 ~20s
+    stream-timeout-ms: 120000       # SSE：长连接
+    title-timeout-ms: 8000          # 标题生成
 
   prediction:
     enabled: ${PREDICTION_ENABLED:true}
     base-url: ${PREDICTION_BASE_URL:http://localhost:8001}
     timeout-ms: 3000
 ```
+
+> **Qwen API Key 不再注入到 Spring 端**：`ALIYUN_API_KEY`、模型选择、Qwen base-url 等迁移至 Python `chat-service` 工程的 `.env`（Spring `application.yaml` 不再持有 LLM 凭证）。
 
 ### 3.1 `@ConfigurationProperties` 类示例
 

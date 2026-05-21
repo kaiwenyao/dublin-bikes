@@ -308,40 +308,148 @@ String sessionId = (candidate.length() <= 64 && validChatId)
     : prefix + "h_" + sha256Hex(chatId).substring(0, 32);
 ```
 
-### 5.4 LLM 调用（LangChain4j）
+### 5.4 LLM 调用（代理到 Python `chat-service`）
+
+Spring 端 **不持有任何 LLM SDK**。`ChatService` 通过 `ChatServiceClient` 把同步 / 流式请求转发给 Python `chat-service`：
 
 ```java
-@Bean
-public OpenAiStreamingChatModel qwenStreamingModel(AliyunQwenProperties p) {
-    return OpenAiStreamingChatModel.builder()
-        .apiKey(p.apiKey()).baseUrl(p.baseUrl())
-        .modelName(p.chatModel()).build();
+@Service
+@RequiredArgsConstructor
+public class ChatServiceClient {
+    private final RestClient restClient;        // 配置：base-url = app.chat-service.base-url
+    private final WebClient  webClient;         // 或 JDK HttpClient，用于 SSE 转发
+
+    public ChatReplyVO chat(String sessionId, int userId, String message) {
+        return restClient.post().uri("/chat")
+            .body(Map.of("session_id", sessionId, "user_id", userId, "message", message))
+            .retrieve().body(ChatReplyVO.class);
+    }
+
+    public Flux<String> chatStream(String sessionId, int userId, String message) {
+        return webClient.post().uri("/chat/stream")
+            .accept(MediaType.TEXT_EVENT_STREAM)
+            .bodyValue(Map.of("session_id", sessionId, "user_id", userId, "message", message))
+            .retrieve().bodyToFlux(String.class);   // 每条事件 = data: {"content":"..."} 的 payload
+    }
+
+    public List<ChatMessageVO> history(String sessionId) {
+        return restClient.get().uri("/sessions/{id}/messages", sessionId)
+            .retrieve().body(new ParameterizedTypeReference<>() {});
+    }
+
+    public String title(String firstMessage) {
+        return restClient.post().uri("/chat/title")
+            .body(Map.of("message", firstMessage))
+            .retrieve().body(TitleResp.class).title();
+    }
 }
 ```
 
-- 同步：`chatModel.chat(messages)`
-- 流式：`streamingChatModel.chat(messages, handler)`，`handler` 每 token 写入 SSE 响应（`SseEmitter` 或 `ResponseBodyEmitter`）。
-- 历史：自定义 `ChatMemoryStore`，从 `message_store` 读 JSON、反序列化为 LangChain4j `ChatMessage`。
-- 写入：每次对话结束后，把 user message + ai message 以 LangChain 兼容 JSON 写回 `message_store`（**字段名 / type 值必须与 Python 端一致**，否则 Python 端不再可用）。
+- **同步**：`POST /api/chat/` → Spring JWT 鉴权 → `_ensureSession` → `ChatServiceClient.chat()` → 包统一 `ApiResponse` 返回前端。
+- **流式**：`POST /api/chat/stream` → Spring 用 `SseEmitter` 或 `ResponseBodyEmitter` **逐 token 转发** Python 端的 SSE 事件；前端收到的事件流格式与 Flask 完全一致（`data: {"content":"..."}\n\n` … `data: [DONE]\n\n`）。
+- **历史 / message_store 读写**：由 Python `chat-service` 通过 LangChain `SQLChatMessageHistory` 独占完成。Spring 端不映射 `message_store` 实体。
 
-### 5.5 会话表维护
+### 5.5 会话表维护（仍在 Spring 端）
+
+`sessions` 表归 Spring 拥有（持有 JWT 鉴权和用户 ACL，Python 端不直接访问）：
 
 - `_ensureSession`：upsert `sessions(id, user_id)`，`updated_at = utcnow()`。
 - 并发竞争：先 `findById`、不存在则 insert；捕获 `DataIntegrityViolationException` 后重读。
-- 标题生成：首条消息后调用 Qwen `qwen-plus`：
-  ```
-  "Summarize the topic of this sentence in 6 words or less, output only the title without punctuation: {first_message[:200]}"
-  ```
-  取前 50 字符写入 `sessions.title`。异常吞掉、log warn。
+- **标题生成**（异步）：首条消息成功落库后，`@Async` 调用 `chatServiceClient.title(firstMessage)`；返回的标题取前 50 字符写入 `sessions.title`。异常吞掉、log warn。
+- ACL：所有 `/api/chat/*` 端点必须先校验 `session.userId == 当前 JWT subject`，不一致返回 404 `{"code":404, "msg":"session not found"}`（防止信息泄露）。
 
 ### 5.6 历史接口
 
-`GET /api/chat/sessions/{id}/messages` → `[{role, content}]`，role 映射：
-- `human` → `user`
-- `ai` → `assistant`
-- `system` / `tool` 原样
+`GET /api/chat/sessions/{id}/messages`：
 
-session 不存在或不属于当前用户 → `{"code":404, "msg":"session not found", "data":null}` HTTP 404。
+1. Spring 鉴权 → 查 `sessions` 表验证归属（404 兜底）。
+2. 调 `chatServiceClient.history(sessionId)` 获取 `[{role, content}]`（角色映射在 Python 端完成：`human → user`、`ai → assistant`、`system/tool` 原样）。
+3. 直接透传 → 包 `ApiResponse` 返回。
+
+### 5.7 Python `chat-service` 规格
+
+独立工程，建议放在仓库根级 `chat-service/`（与 `backend/`、`frontend/` 平级），或作为 monorepo 子目录 `services/chat-service/`。
+
+**端点**：
+
+| 方法 | 路径 | 入参 | 出参 |
+|---|---|---|---|
+| POST | `/chat`         | `{session_id, user_id, message}` | `{chat_id, reply}` |
+| POST | `/chat/stream`  | `{session_id, user_id, message}` | `text/event-stream`，逐 token `data: {"content":"..."}\n\n`，结束 `data: [DONE]\n\n` |
+| POST | `/chat/title`   | `{message}` | `{title}` |
+| GET  | `/sessions/{session_id}/messages` | path | `[{role, content}]` |
+| GET  | `/health`       | — | `{"status":"ok"}` |
+
+**核心实现**（参考骨架）：
+
+```python
+# chat-service/main.py
+from fastapi import FastAPI
+from sse_starlette.sse import EventSourceResponse
+from langchain_community.chat_message_histories import SQLChatMessageHistory
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, AIMessage
+import os, json
+
+app = FastAPI()
+
+DB_URL = os.environ["CHAT_DB_URL"]              # mysql+pymysql://...
+QWEN_KEY = os.environ["ALIYUN_API_KEY"]
+QWEN_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+llm        = ChatOpenAI(model="qwen-plus", api_key=QWEN_KEY, base_url=QWEN_BASE)
+llm_stream = ChatOpenAI(model="qwen-plus", api_key=QWEN_KEY, base_url=QWEN_BASE, streaming=True)
+
+def memory(session_id: str) -> SQLChatMessageHistory:
+    return SQLChatMessageHistory(session_id=session_id, connection_string=DB_URL)
+
+@app.post("/chat")
+def chat(req: dict):
+    mem = memory(req["session_id"])
+    mem.add_message(HumanMessage(content=req["message"]))
+    ai = llm.invoke(mem.messages)
+    mem.add_message(AIMessage(content=ai.content))
+    return {"chat_id": req["session_id"], "reply": ai.content}
+
+@app.post("/chat/stream")
+async def chat_stream(req: dict):
+    mem = memory(req["session_id"])
+    mem.add_message(HumanMessage(content=req["message"]))
+    history = mem.messages
+    async def gen():
+        chunks = []
+        async for ev in llm_stream.astream(history):
+            chunks.append(ev.content)
+            yield {"data": json.dumps({"content": ev.content})}
+        mem.add_message(AIMessage(content="".join(chunks)))
+        yield {"data": "[DONE]"}
+    return EventSourceResponse(gen())
+
+@app.post("/chat/title")
+def title(req: dict):
+    prompt = ("Summarize the topic of this sentence in 6 words or less, "
+              "output only the title without punctuation: " + req["message"][:200])
+    out = llm.invoke([HumanMessage(content=prompt)])
+    return {"title": out.content.strip()[:50]}
+
+@app.get("/sessions/{sid}/messages")
+def history(sid: str):
+    role = {"human": "user", "ai": "assistant"}
+    return [{"role": role.get(m.type, m.type), "content": m.content}
+            for m in memory(sid).messages]
+```
+
+**契约约束**：
+
+- `session_id` 始终由 Spring 生成（含 `user_id` 前缀），Python 端不做业务校验、不写 `sessions` 表。
+- `message_store` 表 schema / 列名沿用 LangChain 默认（`id INT PK`、`session_id TEXT`、`message JSON`），Spring `Flyway` baseline 把它视为存量表。
+- LangChain 版本锁定后写入 `chat-service/README.md`；升级前必跑兼容性回归（见 R1）。
+
+**部署**：
+
+- Dockerfile（`python:3.11-slim` + `uvicorn main:app --host 0.0.0.0 --port 8002`）。
+- `docker-compose.yml` 增加服务 `chat-service`，与 `app`（Spring）、`mysql` 共网络。
+- 端口：默认 `8002`（与 `prediction-service:8001` 错开）。
 
 ---
 

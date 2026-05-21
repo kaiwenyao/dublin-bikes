@@ -52,6 +52,7 @@
    - 阿里云通义 Qwen（兼容 OpenAI 协议）
    - LangChain 记忆 (`SQLChatMessageHistory` → MySQL `message_store` 表)
    - 普通 + SSE 流式响应、会话列表、会话历史、自动生成会话标题
+   - **重构后**：LangChain 逻辑保留在 **独立 Python 微服务（`chat-service`）**，Spring Boot 仅做 JWT 鉴权、`sessions` 表 ACL 维护、HTTP/SSE 代理
 
 **重构目标**：以 **Spring Boot 3.5.14 + Java 21** 重写后端，保持 **API 路径、请求/响应体、HTTP 语义、业务行为完全兼容**，前端无需改动即可切换。
 
@@ -99,7 +100,7 @@
 |---|---|---|
 | OpenWeatherMap OneCall | 天气数据（**数据已由独立爬虫写入数据库**，应用只读） | 仅 JPA 查询 |
 | Google Maps Distance Matrix / Geocoding | 行程规划 | `RestClient` + 自实现 retry / Resilience4j |
-| 阿里云通义 Qwen（兼容 OpenAI 协议） | LLM 对话 | LangChain4j 或 Spring AI |
+| 阿里云通义 Qwen（兼容 OpenAI 协议） | LLM 对话 | **独立 Python `chat-service`（LangChain）**，Spring 通过 `RestClient` + SSE 代理 |
 | SMTP（Flask-Mail） | 邮件 | `spring-boot-starter-mail` (JavaMailSender) |
 | MySQL | 持久化 | `spring-boot-starter-data-jpa` + `mysql-connector-j` |
 | 训练好的 scikit-learn `.pkl` 模型 | 自行车预测 | 见 `08-module-prediction.md`（推荐：将 ML 模型独立为 Python FastAPI 微服务，Spring Boot 通过 HTTP 调用；备选：导出为 ONNX 用 Java 加载） |
@@ -117,7 +118,7 @@
 | 配置 | `python-dotenv` + `config.py` | `application.yaml` + `@ConfigurationProperties` |
 | 安全 | 手写 JWT (PyJWT) + token_version | `spring-boot-starter-security` + `jjwt` / Spring Security OAuth2 Resource Server |
 | 邮件 | Flask-Mail + `ThreadPoolExecutor` | `spring-boot-starter-mail` + `@Async` |
-| LLM | LangChain (Python) | **LangChain4j 1.x** 或 Spring AI 1.x（含 SSE） |
+| LLM | LangChain (Python，单体) | **保留 LangChain (Python)** 拆为独立 `chat-service`，Spring 通过 `RestClient`（同步）+ `WebClient` 或 `HttpClient` 转发 SSE |
 | 行程外部 API | `googlemaps` Python SDK | `RestClient` 或 OpenFeign |
 | ML 模型加载 | `pickle.load` 进程内 | 独立 Python 微服务（推荐）/ ONNX |
 | 测试 | pytest + 覆盖率 | JUnit 5 + Mockito + Testcontainers + MockMvc |
@@ -134,7 +135,7 @@
 | **S2** | JPA 实体 + 站点 / 天气模块 | Station / Availability / WeatherForecast 实体、对应 Repository、Service、Controller、单元测试 |
 | **S3** | 用户系统 + JWT + 邮件 | User 实体、注册/激活/登录/refresh/logout、`token_version` 黑名单、HTML 邮件模板、异步发送 |
 | **S4** | 行程规划 | Google Maps Client、Distance Matrix 批量、最小总时长搜索算法（端口现有 Python 逻辑）、Resilience4j 重试 |
-| **S5** | LLM 对话 | LangChain4j + 通义 Qwen、`sessions` + `message_store` 表读写、SSE 流式输出、自动标题生成 |
+| **S5** | LLM 对话 | 部署独立 Python `chat-service`（LangChain + Qwen + `message_store` 读写）；Spring `ChatController` + `ChatService` 做 JWT 鉴权、`sessions` 表 ACL、SSE 代理；自动标题生成由 Spring 调用 `chat-service /title` |
 | **S6** | ML 预测服务 + 集成 | 部署独立 Python 预测微服务；Spring 端 `PredictionService` 通过 `RestClient` 调用、完整 E2E 联调、Postman/HTTPie 验证 |
 
 每个 Sprint 的细分任务、依赖和验收标准见 `11-migration-roadmap.md`。

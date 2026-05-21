@@ -232,9 +232,13 @@ public class ChatSession {
 
 ---
 
-## 6. `message_store` — LangChain 默认聊天历史表
+## 6. `message_store` — LangChain 聊天历史表（Python 独占）
 
-> 这是 LangChain 的 `SQLChatMessageHistory` 默认 schema。Java 端如果用 LangChain4j 的 `ChatMemoryStore`，需要 **自定义实现** 来读写该表（详见 `04-modules.md` 第 5 节），以兼容 Python 写入的存量数据。
+> **归属变更**：本表由 **独立 Python `chat-service`** 通过 LangChain `SQLChatMessageHistory` 读写，**Spring 端不映射为 JPA 实体**。Java 侧获取历史一律走 `chat-service` HTTP 接口（见 `04-modules.md` §5）。
+>
+> 此处仍记录 schema，因为：
+> 1. Spring 与 Python 共享同一个 MySQL 实例和库；Flyway baseline 需识别此表。
+> 2. 排障 / 数据修复时可能需要直接读 SQL。
 
 | 列 | 类型 | 约束 |
 |---|---|---|
@@ -242,7 +246,7 @@ public class ChatSession {
 | `session_id` | `TEXT` | （Python 端 `db.Text`；MySQL 物理列为 `TEXT`） |
 | `message` | `JSON` | LangChain `BaseMessage` 序列化结构 |
 
-**`message` JSON 结构**（LangChain 1.x）：
+**`message` JSON 结构**（LangChain 1.x，由 Python 端写入）：
 ```json
 {
   "type": "human",
@@ -255,19 +259,7 @@ public class ChatSession {
 ```
 角色枚举：`human` ↔ `user`、`ai` ↔ `assistant`、`system`、`tool`。
 
-```java
-@Entity
-@Table(name = "message_store")
-@Getter @Setter @NoArgsConstructor
-public class ChatMessage {
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Integer id;
-    @Column(name = "session_id", columnDefinition = "TEXT")
-    private String sessionId;
-    @Column(columnDefinition = "JSON")
-    private String messageJson;        // 原文 JSON，反序列化在 Service 层做
-}
-```
+> Spring 端无需实现 `ChatMemoryStore`、无需写 `ChatMessage` JPA 实体；如调试需要可在 `db/migration` 之外提供只读 native query，不纳入主代码路径。
 
 ---
 

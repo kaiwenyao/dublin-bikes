@@ -43,7 +43,7 @@
 **Integration**
 - 启动完整 `@SpringBootTest`，Testcontainers MySQL + Flyway baseline。
 - 用 `TestRestTemplate` 走全链路：register → send-code → activate → login → me。
-- chat 模块：mock `OpenAiStreamingChatModel`，断言 SSE 分块输出和 `[DONE]` 收尾。
+- chat 模块：`WireMock` 模拟 Python `chat-service` 的 `/chat/stream`，断言 Spring SSE 透传分块输出和 `[DONE]` 收尾。
 
 **外部 API**
 - `WireMock` 模拟 Google Maps Distance Matrix；测试 5×5 矩阵解析与重试。
@@ -119,16 +119,18 @@
 
 ### Sprint S5 — Chat (LLM)（4 天）
 
-任务：
-1. `ChatSession` / `ChatMessage` Entity + Repository（注意 `message_store` JSON 列）。
-2. `JdbcChatMemoryStore`：读写 LangChain 兼容 JSON。
-3. `QwenChatClient` Bean（OpenAI 兼容协议）。
-4. `ChatService.generateChatResponse` 同步 + `generateChatStream` SSE。
-5. `_ensureSession` 并发安全（DataIntegrityViolation 重试）。
-6. 标题自动生成（异步，异常吞掉）。
-7. 会话列表 + 历史接口（行级 ACL：`userId == 当前用户`）。
+> Spring 端不再实现 LLM 调用与 `message_store` 读写；这两块由独立 Python `chat-service` 完成。Spring 仅做鉴权、`sessions` 表 ACL、SSE 透传。
 
-**验收**：完整 SSE 流式对话端到端跑通；Python 端写入的历史 Java 能读出；Java 端写入的历史 Python 也能读出（双向兼容）。
+任务：
+1. **Python `chat-service`** 工程化：FastAPI + LangChain（`SQLChatMessageHistory`）+ Qwen（OpenAI 兼容），端点 `/chat`、`/chat/stream`、`/chat/title`、`/sessions/{id}/messages`、`/health`。Dockerfile + `docker-compose` 服务定义。详见 `04-modules.md` §5.7。
+2. Spring `ChatSession` Entity + `ChatSessionRepository`（仅 `sessions` 表，不映射 `message_store`）。
+3. Spring `ChatServiceClient`（`RestClient` 同步 + `WebClient`/JDK `HttpClient` SSE 转发）+ `ChatServiceProperties`。
+4. Spring `ChatService.generateChatResponse` 同步 + `generateChatStream` SSE 透传。
+5. `_ensureSession` 并发安全（DataIntegrityViolation 重试）。
+6. 标题自动生成：`@Async` 调用 `chat-service /chat/title`，异常吞掉。
+7. 会话列表 + 历史接口（行级 ACL：`userId == 当前用户`，命中后再代理到 chat-service 取历史）。
+
+**验收**：完整 SSE 流式对话端到端跑通；`docker-compose up` 同时拉起 Spring + chat-service + MySQL；session ACL 测试覆盖（A 用户无法读到 B 用户的 session）。
 
 ---
 
@@ -150,7 +152,7 @@
 
 | # | 风险 | 影响 | 缓解 |
 |---|---|---|---|
-| R1 | LangChain Python `SQLChatMessageHistory` JSON 结构演进 | Java/Python 读不到对方写的历史 | 锁版本；用集成测试两端互读 |
+| R1 | LangChain Python `SQLChatMessageHistory` JSON 结构演进 | 升级 LangChain 后历史读不出 | 锁定 `langchain-community` 版本；chat-service 升级前跑 `/sessions/{id}/messages` 回归测试 |
 | R2 | sklearn 模型 ONNX 化失败 | 无法走方案 B 单 JVM 部署 | 默认走方案 A（Python 微服务） |
 | R3 | MySQL `JSON` 列在 H2 行为差异 | 单元测试假阳/假阴 | 仅用 Testcontainers MySQL，不用 H2 |
 | R4 | 旧 JWT logout 失效要求"立刻" | 短期内大量旧 token 涌入数据库压力 | 每次校验 `verifyAccessToken` 都 reload user → 加 user 缓存（Caffeine, TTL=30s） |
@@ -167,9 +169,14 @@
 - 决策：Flyway。
 - 理由：现状 Alembic 都是顺序 SQL 风格，Flyway 概念一一对应；Liquibase 的 changeSet 概念会让团队不适应。
 
-**ADR-002 LangChain4j 而非 Spring AI**
-- 决策：LangChain4j 1.x。
-- 理由：与 Python LangChain 概念对齐（ChatMemoryStore、Messages 形态），存量 `message_store` 数据复用最直接；Spring AI 抽象更高但要再写 adapter。
+**ADR-002 LLM 走独立 Python `chat-service`（而非 Java SDK）**
+- 决策：保留 Python LangChain 实现，拆为独立 FastAPI 微服务 `chat-service`；Spring 端不引入 LangChain4j、Spring AI。
+- 理由：
+  1. LangChain Python 是 LangChain 的"母生态"，`SQLChatMessageHistory` 行为、`message_store` JSON 结构由它定义；保留 Python 端，避免任何跨语言 JSON 兼容性翻译。
+  2. Flask 项目原本就是 LangChain Python 实现，迁移工作量近乎 0（只把 `chat_service.py` 抽成 FastAPI app）。
+  3. 与 ADR-003（Prediction 走 Python 微服务）一致：Spring 是 HTTP/ACL/事务边界，Python 是 ML/LLM 计算边界，职责清晰。
+  4. LLM 凭证 / 模型选择 / 限流 / 提示词调优都收敛在 Python 端，Spring 端不背 LLM SDK 升级负担。
+- 代价：多一个进程；多一跳网络（同 Compose 网络，可忽略）。
 
 **ADR-003 ML 模型走独立 Python 微服务**
 - 决策：FastAPI 子服务。
@@ -194,7 +201,7 @@
 - [ ] 全部 Postman 用例 200 / 4xx / 5xx 与 Flask 一致。
 - [ ] JSON 字段名 100% snake_case，值的格式（日期、布尔、null）与 Flask 一致。
 - [ ] JWT logout 立即失效（集成测试覆盖）。
-- [ ] LangChain `message_store` Python ↔ Java 双向读写兼容。
+- [ ] Python `chat-service` 容器健康；Spring `ChatServiceClient` 同步 + SSE 两端用例均通过；`message_store` 由 Python 单向写入。
 - [ ] Jacoco 行覆盖 ≥ 80%。
 - [ ] Docker Compose 一键启动通过。
 - [ ] README 含开发 / 测试 / 部署 / 回退步骤。
