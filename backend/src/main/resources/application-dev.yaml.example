@@ -1,3 +1,5 @@
+# Copy to application-dev.yaml (gitignored) and set real values locally.
+#   cp application-dev.yaml.example application-dev.yaml
 spring:
   datasource:
     url: ${DATABASE_URL:jdbc:mysql://localhost:3306/dublinbikes?useUnicode=true&characterEncoding=utf-8&serverTimezone=UTC}
