@@ -101,7 +101,7 @@
 6. 7 个 user 端点 + `/me`。
 7. 端到端测试：register → send-code → activate → login → me → refresh → logout 后旧 token 拒绝。
 
-**验收**：所有 user 端点 Postman 测试通过；logout 后旧 access_token 立即 401。
+**验收**：所有 user 端点 Postman 测试通过；login / refresh 返回 `access_token`、`refresh_token`、`expires_in`、`token_type`；logout 后旧 access_token 立即 401。
 
 ---
 
@@ -113,7 +113,7 @@
 3. WebMvc + Mock 测试 ≥ 80% 覆盖。
 4. 校验 DTO 二选一（`start_address/end_address` XOR `start/end`）。
 
-**验收**：地址型和坐标型请求各 1 个 Postman 用例对比 Flask 输出，最优路线一致。
+**验收**：地址型和坐标型请求各 1 个 Postman 用例对比 Flask 输出，最优路线一致；响应 `data` 必须包含前端需要的 `route_info` 与 `search_context`，其中站点对象包含 `coords`、`walking_time` 和 availability 字段。
 
 ---
 

@@ -141,12 +141,33 @@ B. 坐标：
 
 ```json
 {"code":0,"msg":"ok","data":{
-  "start_station": {"number":1,"name":"...","walking_time":120,"available_bikes":5},
-  "end_station":   {"number":42,"name":"...","walking_time":180,"available_bike_stands":7},
-  "cycling_route": {"cycling_time": 540},
-  "total_duration": 840
+  "route_info": {
+    "start_station": {
+      "number": 1,
+      "name": "...",
+      "address": "...",
+      "coords": {"lat": 53.34, "lon": -6.26},
+      "walking_time": 120,
+      "available_bikes": 5
+    },
+    "end_station": {
+      "number": 42,
+      "name": "...",
+      "address": "...",
+      "coords": {"lat": 53.33, "lon": -6.25},
+      "walking_time": 180,
+      "available_bike_stands": 7
+    },
+    "cycling_route": {"cycling_time": 540},
+    "total_duration": 840
+  },
+  "search_context": {
+    "start_resolved": {"lat": 53.34, "lon": -6.26},
+    "end_resolved": {"lat": 53.33, "lon": -6.25}
+  }
 }}
 ```
+`route_info` / `search_context` 为前端 `JourneyPlanResponse` 的固定结构；不要返回扁平 `data.start_station`，否则地图页无法解构路线信息。
 若无可行路线：`{"code":404,"msg":"no available route","data":null}` HTTP 404。
 
 ### 3.4 算法（端口 Flask 现有实现，**不要重新设计**）
@@ -227,14 +248,41 @@ public record UserRegistrationRequestDTO(
 - `logout`：`user.token_version += 1` → 所有旧 token 立即失效。
 - 配合 Spring Security：自定义 `JwtAuthenticationFilter extends OncePerRequestFilter`，把通过校验的用户写入 `SecurityContextHolder`。
 
-### 4.4 邮件发送
+### 4.4 登录 / 刷新响应合同
+
+`POST /api/users/login` 成功返回：
+```json
+{"code":0,"msg":"ok","data":{
+  "access_token": "...",
+  "refresh_token": "...",
+  "expires_in": 3600,
+  "token_type": "Bearer"
+}}
+```
+
+`POST /api/users/refresh` 请求与响应：
+```json
+{"refresh_token":"..."}
+```
+```json
+{"code":0,"msg":"ok","data":{
+  "access_token": "...",
+  "refresh_token": "...",
+  "expires_in": 3600,
+  "token_type": "Bearer"
+}}
+```
+
+前端 refresh 逻辑至少依赖 `access_token`，若刷新时沿用旧 refresh token，`refresh_token` 可返回旧值；推荐始终返回当前有效 refresh token。字段名必须保持 snake_case（依赖全局 Jackson `SNAKE_CASE` 或显式 `@JsonProperty`）。
+
+### 4.5 邮件发送
 
 - 模板：复制 `flask-app/templates/email_verification.html` 到 `src/main/resources/templates/email_verification.html`，把 `{code}` → `[[${code}]]`、`{expires_minutes}` → `[[${expiresMinutes}]]`、`{activation_link_section}` → Thymeleaf 条件块。
 - 主题：`[Dublin Bikes] Verify your email to start riding`（与 Flask 完全一致）。
 - 异步：`@Async("mailExecutor")`；`AsyncConfig` 暴露线程池（core=2, max=2, queue=100, name-prefix=`email-send-`）。
 - 未配置 SMTP 时静默跳过（与 Flask 行为一致），但 INFO 级 log 记录"mail not configured, skip"。
 
-### 4.5 注册流程要点
+### 4.6 注册流程要点
 
 1. 解析、校验 DTO。
 2. 检查 username / email 是否重复 → 抛 `BusinessException(40901/40902, ..., 409)`。
@@ -242,14 +290,14 @@ public record UserRegistrationRequestDTO(
 4. 持久化 User，**强制 `isActive=false`**（覆盖列默认）；不生成验证码（验证码通过 `send-verification-code` 端点单独申请）。
 5. 返回 `UserVO`：`{id, username, email, avatar_url, is_active=false, created_at}`。
 
-### 4.6 验证码与激活
+### 4.7 验证码与激活
 
 - 生成：6 位随机数字 + 64 字符随机 token（`secrets.token_urlsafe(48)` ≈ `Base64Url` 截断 64；Java 端用 `SecureRandom` + Base64URL）。
 - 写库：`email_verification_code`、`email_verification_code_expires_at = now + 5min`、`email_verification_code_sent_at = now`、`activation_token`。
 - 60 秒重发节流：`now < sent_at + 60s` → 401 `verification code can only be requested once per minute`（保留 Flask 文案）。
 - 激活成功：清空三个 code 字段、`is_active=true`，**不要** 增加 `token_version`。
 
-### 4.7 错误码映射
+### 4.8 错误码映射
 
 | 场景 | code | HTTP |
 |---|---|---|
