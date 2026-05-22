@@ -2,6 +2,8 @@
 
 > 字段名、表名、类型、是否可空、索引、外键 **必须与 Flask 现有 schema 完全一致** —— 因为生产数据库由 Alembic 管理，Spring Boot 端 **只读 schema、不变更 schema**（首版 Flyway 只做 baseline，不写 DDL）。
 
+> JPA 实体包：`dev.kaiwen.bikes.model`（勿与 `dto` 混用）。
+>
 > 来源：`flask-app/app/models/{station,availability,user,weather,session,chat_history}.py`
 
 ---

@@ -112,7 +112,7 @@ if (rows.isEmpty()) throw new BusinessException(50001, "No weather data availabl
 
 ### 2.4 DTO
 
-直接组装成上述 JSON 形态；用 `@JsonInclude(JsonInclude.Include.ALWAYS)` 保留 `null` 字段。
+由 `WeatherMapper`（MapStruct）转换为上述 JSON 对应的 VO；用 `@JsonInclude(JsonInclude.Include.ALWAYS)` 保留 `null` 字段。
 
 ---
 

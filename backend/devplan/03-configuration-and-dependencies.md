@@ -1,6 +1,7 @@
 # 03 — 配置与依赖
 
-> 严格约束：**不修改现有 `pom.xml` 与 `application.yaml`**。本文件给出 **建议** 的 Maven 依赖清单和最终 `application.yaml` 形态，作为后续手工合并参考。
+> 包结构见 `01-architecture.md`。配置按 profile 拆分：`application.yaml` + `application-dev.yaml` / `application-prod.yaml`。
+> 下文保留依赖清单与 `app.*` 配置属性参考。
 
 ---
 
@@ -19,13 +20,14 @@
 | org.springframework.boot | spring-boot-starter-test | test |
 | org.projectlombok | lombok | optional |
 
-### 1.3 已存在配置
-`src/main/resources/application.yaml`:
-```yaml
-spring:
-  application:
-    name: dublin-bikes
-```
+### 1.3 已存在配置（profile 拆分）
+
+| 文件 | 作用 |
+|---|---|
+| `application.yaml` | 应用名、Jackson、Flyway、JPA `validate`、默认 `spring.profiles.active=dev` |
+| `application-dev.yaml` | 本地 MySQL 数据源、`app.chat-service` 默认值 |
+| `application-prod.yaml` | 生产数据源（无默认密码）、连接池调大 |
+| `application-test`（`src/test/resources/application.yaml`） | H2 内存库、`flyway.enabled=false` |
 
 ---
 
@@ -63,6 +65,55 @@ spring:
     <artifactId>spring-boot-starter-actuator</artifactId>
 </dependency>
 ```
+
+### 2.2.1 类型转换：MapStruct（S1）
+
+Entity ↔ DTO/VO 转换统一使用 MapStruct。Service 注入 `*Mapper`，不要在 Service / Controller 中手写字段搬运代码。
+
+```xml
+<properties>
+    <mapstruct.version>1.6.3</mapstruct.version>
+    <lombok-mapstruct-binding.version>0.2.0</lombok-mapstruct-binding.version>
+</properties>
+
+<dependency>
+    <groupId>org.mapstruct</groupId>
+    <artifactId>mapstruct</artifactId>
+    <version>${mapstruct.version}</version>
+</dependency>
+```
+
+同时配置 annotation processor（若项目继续使用 Lombok，保留 Lombok processor 和 binding）：
+
+```xml
+<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-compiler-plugin</artifactId>
+    <configuration>
+        <generatedSourcesDirectory>${project.build.directory}/generated-sources/mapstruct</generatedSourcesDirectory>
+        <annotationProcessorPaths>
+            <path>
+                <groupId>org.mapstruct</groupId>
+                <artifactId>mapstruct-processor</artifactId>
+                <version>${mapstruct.version}</version>
+            </path>
+            <path>
+                <groupId>org.projectlombok</groupId>
+                <artifactId>lombok</artifactId>
+                <version>${lombok.version}</version>
+            </path>
+            <path>
+                <groupId>org.projectlombok</groupId>
+                <artifactId>lombok-mapstruct-binding</artifactId>
+                <version>${lombok-mapstruct-binding.version}</version>
+            </path>
+        </annotationProcessorPaths>
+    </configuration>
+</plugin>
+```
+
+> `lombok.version` 通常由 Spring Boot parent 托管；如果 IDE/Maven 报 property 不存在，则在 `<properties>` 中显式补上当前 Lombok 版本。
+> `componentModel = "spring"` 与 `unmappedTargetPolicy = ReportingPolicy.ERROR` 写在各 `@Mapper` 上；`generatedSourcesDirectory` 避免 IDE 对默认 `target/generated-sources/annotations` 目录做错误的二次编译。
 
 ### 2.3 安全 + JWT（S3）
 ```xml
@@ -219,7 +270,7 @@ spring:
       thread-name-prefix: email-send-
 
 server:
-  port: 5000             # 与 Flask 默认端口一致，便于零改前端联调
+  port: ${SERVER_PORT:5000}    # 与 Flask 默认端口一致，便于零改前端联调；macOS AirPlay 占用时可用 SERVER_PORT 覆盖
   servlet:
     encoding:
       charset: UTF-8
