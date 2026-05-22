@@ -36,6 +36,19 @@
 ]}
 ```
 
+`/api/stations/status`（所有站点最新一条 availability，**扁平数组**，不要再包一层 `{data:[...]}`）：
+```json
+{"code":0,"msg":"ok","data":[
+  {"number":1,"available_bikes":12,"available_bike_stands":28,
+   "status":"OPEN","last_update":1770047175000,
+   "timestamp":"2025-01-20T10:00:00","requested_at":"2025-01-20T10:00:05"},
+  {"number":2,"available_bikes":5,"available_bike_stands":35,
+   "status":"OPEN","last_update":1770047175000,
+   "timestamp":"2025-01-20T10:00:00","requested_at":"2025-01-20T10:00:05"}
+]}
+```
+> 历史 Flask 实现在外层多嵌了一层 `data`，前端 `getStationsStatusAPI` 现在仍做"剥两层 data"的防御。Spring 端**必须**只返回单层 `ApiResponse.data = List<AvailabilityVO>`，避免回归。
+
 ### 1.3 关键查询（JPA）
 
 - 列表：`stationRepository.findAllByOrderByNumberAsc()`
@@ -231,8 +244,47 @@ public record UserRegistrationRequestDTO(
 
     @Size(max=255) String avatarUrl
 ) {}
+
+// POST /api/users/login —— identifier 双通道（username 或 email）
+public record UserLoginRequestDTO(
+    @NotBlank @Size(max=120) String identifier,
+    @NotBlank @Size(min=8, max=128) String password
+) {}
+
+// POST /api/users/send-verification-code
+public record SendVerificationCodeRequestDTO(
+    @NotBlank @Size(max=120) String identifier
+) {}
+
+// POST /api/users/activate
+public record ActivateAccountRequestDTO(
+    @NotBlank @Size(max=120) String identifier,
+    @NotBlank @Pattern(regexp="^\\d{6}$", message="code must be 6 digits.")
+    String code
+) {}
+
+// POST /api/users/activate-by-token —— 邮件链接里的 64 字符 base64url token
+public record ActivateByTokenRequestDTO(
+    @NotBlank @Size(min=32, max=128) String token
+) {}
+
+// POST /api/users/refresh
+public record RefreshTokenRequestDTO(
+    @NotBlank String refreshToken    // 反序列化字段名 refresh_token（依赖 Jackson SNAKE_CASE）
+) {}
 ```
-> Controller 必须在反序列化前 normalize：`username.trim()`、`email.strip().toLowerCase()`。建议在 DTO 之外的辅助层做。
+> Controller 必须在反序列化前 normalize：
+> - `username.trim()`（注册）
+> - `email.strip().toLowerCase()`（注册）
+> - `identifier.trim()`（登录 / 重发验证码 / 激活）：**不强制 lowercase**，由 Service 层决定按 username 精确匹配还是按 email 大小写不敏感匹配。
+> - `code.trim()`、`token.trim()`：去除前后空白。
+>
+> 建议把 normalize 放在 Controller → Service 之间的辅助层，DTO 自身保持纯净。
+
+**`identifier` 语义（重要）**：
+- 命中 `@` 字符且匹配邮箱正则 → 按 `email` 字段查询（lowercase 比较）。
+- 否则按 `username` 字段精确查询。
+- 两端均查不到 → 401 `40101`（不要泄露"用户不存在/密码错误"差异）。
 
 ### 4.3 JWT 设计（**严格复刻 Flask 实现**）
 
@@ -247,6 +299,32 @@ public record UserRegistrationRequestDTO(
   3. `user.is_active == true`
 - `logout`：`user.token_version += 1` → 所有旧 token 立即失效。
 - 配合 Spring Security：自定义 `JwtAuthenticationFilter extends OncePerRequestFilter`，把通过校验的用户写入 `SecurityContextHolder`。
+
+**请求头读取顺序（兼容前端遗留实现）**：
+
+前端 `request.ts` 与 `chat.ts` 在每次受保护请求上同时写入两个头：
+```
+Authorization: Bearer <access_token>
+token: <access_token>
+```
+
+Spring `JwtAuthenticationFilter` 必须按以下顺序解析：
+1. 先读 `Authorization` 头，若以 `Bearer ` 前缀开头则取后段。
+2. 缺失或不合法时回退读 `token` 头（裸 token，不含 `Bearer ` 前缀）。
+3. 两者都没有 → 跳过本过滤器（让 Security 链按公开/受保护路由策略判定 401）。
+
+```java
+private String resolveToken(HttpServletRequest req) {
+    String auth = req.getHeader(HttpHeaders.AUTHORIZATION);
+    if (auth != null && auth.startsWith("Bearer ")) {
+        return auth.substring(7).trim();
+    }
+    String legacy = req.getHeader("token");
+    return (legacy != null && !legacy.isBlank()) ? legacy.trim() : null;
+}
+```
+
+> `token` 头属于兼容补丁，**新代码不要写**；待前端清理后移除该回退分支。
 
 ### 4.4 登录 / 刷新响应合同
 
@@ -289,6 +367,11 @@ public record UserRegistrationRequestDTO(
 3. `passwordEncoder.encode(password)`（BCrypt，cost=10）。
 4. 持久化 User，**强制 `isActive=false`**（覆盖列默认）；不生成验证码（验证码通过 `send-verification-code` 端点单独申请）。
 5. 返回 `UserVO`：`{id, username, email, avatar_url, is_active=false, created_at}`。
+
+**`created_at` 时区格式约定**：
+- Flask `datetime.isoformat()` 输出**无时区** ISO-8601（如 `"2025-01-20T10:00:00"` 或 `"2025-01-20T10:00:00.123456"`）。
+- Spring 端 `LocalDateTime` 默认序列化也是无时区 ISO-8601；**禁止**改成 `OffsetDateTime` 或追加 `Z`/`+00:00` 后缀，否则前端 `Date` 解析行为会从"本地时区"漂到"UTC"。
+- 集成测试用 byte-for-byte 字符串对比断言（详见 §R9）。
 
 ### 4.7 验证码与激活
 
@@ -510,6 +593,8 @@ def history(sid: str):
 | 方法 | 路径 |
 |---|---|
 | GET | `/api/stations/{number}/prediction` |
+
+> **不接受 query 参数 `hours`**：后端始终返回从"当前小时起"的完整 hourly 预测序列（长度取决于 `weather_forecast` 表里可用的未来小时数，通常 24~48 小时）。前端 `getStationPredictionAPI(number, hours)` 自行在客户端 `slice(0, hours)`（目前 UI 提供 4h / 24h 两个视图）。**不要**接 `?hours=` 查询参数，否则与 Flask 行为分歧。
 
 ### 6.2 响应
 
