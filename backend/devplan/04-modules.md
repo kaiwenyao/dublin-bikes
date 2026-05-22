@@ -78,8 +78,8 @@ List<Availability> findLatestPerStation();
 
 ### 1.4 异常映射
 
-- station not found → `{"code":1,"msg":"station not found","data":null}` HTTP 404（保持原状）
-- 注意 Flask 在 station 模块用的是 `code: 1`，不是 `40901` 等；不要"统一化"它。
+- station not found → `{"code":1,"msg":"station not found","data":null}` HTTP 404（**严格复刻 Flask** —— Postman 回归用例对 `code:1` 强断言）。
+- 在 `dto.ApiCodes` 中新增具名常量 `STATION_NOT_FOUND = 1`，业务码值保持 `1` 与 Flask 兼容，但代码里**不得**直接写裸数字 `1`（与 `01-architecture.md` §10 "禁止魔法数字" 约定一致）。同一常量在 `04 §6` Prediction 模块复用。
 
 ---
 
@@ -120,7 +120,7 @@ List<Availability> findLatestPerStation();
 List<WeatherForecast> rows = weatherRepository
     .findTop6ByForecastTimeGreaterThanEqualOrderByForecastTimeAsc(
         LocalDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.HOURS));
-if (rows.isEmpty()) throw new BusinessException(50001, "No weather data available in database", 404);
+if (rows.isEmpty()) throw new BusinessException(ApiCodes.WEATHER_ERROR, "No weather data available in database", 404);
 ```
 
 ### 2.4 DTO
@@ -265,7 +265,7 @@ public record ActivateAccountRequestDTO(
 
 // POST /api/users/activate-by-token —— 邮件链接里的 64 字符 base64url token
 public record ActivateByTokenRequestDTO(
-    @NotBlank @Size(min=32, max=128) String token
+    @NotBlank @Size(min=32, max=64) String token   // 与 user.activation_token VARCHAR(64) 列长保持一致
 ) {}
 
 // POST /api/users/refresh
@@ -333,7 +333,7 @@ private String resolveToken(HttpServletRequest req) {
 {"code":0,"msg":"ok","data":{
   "access_token": "...",
   "refresh_token": "...",
-  "expires_in": 3600,
+  "expires_in": 900,
   "token_type": "Bearer"
 }}
 ```
@@ -346,7 +346,7 @@ private String resolveToken(HttpServletRequest req) {
 {"code":0,"msg":"ok","data":{
   "access_token": "...",
   "refresh_token": "...",
-  "expires_in": 3600,
+  "expires_in": 900,
   "token_type": "Bearer"
 }}
 ```
@@ -636,12 +636,15 @@ Spring 端：
 public class PredictionService {
     public List<PredictionPointVO> predict(int stationNumber) {
         Station station = stationRepo.findById(stationNumber)
-            .orElseThrow(() -> new BusinessException(1, "Station "+stationNumber+" not found", 400));
+            .orElseThrow(() -> new BusinessException(
+                ApiCodes.STATION_NOT_FOUND, "Station "+stationNumber+" not found", 404));
         List<WeatherForecast> forecasts = weatherRepo
             .findByForecastTimeGreaterThanEqualOrderByForecastTimeAsc(
                 LocalDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.HOURS));
         if (forecasts.isEmpty())
-            throw new BusinessException(1, "No weather forecast data available to make predictions", 400);
+            throw new BusinessException(
+                ApiCodes.WEATHER_ERROR,
+                "No weather forecast data available to make predictions", 404);
 
         List<Map<String,Object>> rows = forecasts.stream()
             .map(f -> buildFeatureRow(station, f)).toList();

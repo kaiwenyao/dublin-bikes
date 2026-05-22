@@ -155,7 +155,7 @@ public class ChatServiceConfig {
 | 文件 | Profile | 职责 |
 |---|---|---|
 | `application.yaml` | 无（公共） | 应用名、**Jackson snake_case**、JPA `validate`、Flyway、默认 `spring.profiles.active=dev` |
-| `application-dev.yaml` | `dev` | 本地 MySQL 数据源（含开发默认账号）、`app.chat-service` 默认 `http://localhost:8002` |
+| `application-dev.yaml` | `dev` | 本地 PostgreSQL 数据源（含开发默认账号）、`app.chat-service` 默认 `http://localhost:8002` |
 | `application-prod.yaml` | `prod` | 生产数据源（**无默认密码**）、Hikari 池加大、`CHAT_SERVICE_BASE_URL` 必填 |
 | `src/test/resources/application.yaml` | `test` | H2 内存库、`flyway.enabled=false`（测试隔离） |
 
@@ -207,11 +207,12 @@ public record ApiResponse<T>(int code, String msg, T data) {
 | 常量 | 值 | 场景 |
 |---|---|---|
 | `SUCCESS` | 0 | 成功 |
+| `STATION_NOT_FOUND` | 1 | 站点不存在（Station / Prediction 模块复用，复刻 Flask `code:1`） |
 | `VALIDATION_ERROR` | 40001 | Bean Validation 失败 |
 | `AUTH_ERROR` | 40101 | 未登录 / token 无效 |
 | `USERNAME_EXISTS` | 40901 | 注册用户名冲突 |
 | `EMAIL_EXISTS` | 40902 | 邮箱已注册 |
-| `WEATHER_ERROR` | 50001 | 天气数据异常 |
+| `WEATHER_ERROR` | 50001 | 天气数据异常（Weather / Prediction 模块复用） |
 | `GENERIC_ERROR` | 50000 | 未捕获异常 |
 
 ---

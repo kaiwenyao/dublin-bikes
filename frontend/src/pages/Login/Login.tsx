@@ -1,42 +1,48 @@
-import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { userLoginAPI, setAuthTokens } from '@/api'
-import { toast } from 'sonner'
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { userLoginAPI, setAuthTokens } from "@/api";
+import { toast } from "sonner";
 
-const UNACTIVATED_MESSAGE = 'account is disabled'
+const UNACTIVATED_MESSAGE = "account is disabled";
 
 export default function Login() {
-  const navigate = useNavigate()
-  const [identifier, setIdentifier] = useState('')
-  const [password, setPassword] = useState('')
-  const [rememberMe, setRememberMe] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const navigate = useNavigate();
+  const [identifier, setIdentifier] = useState("");
+  const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: { preventDefault(): void }) => {
-    e.preventDefault()
-    setError(null)
-    setLoading(true)
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
     try {
-      const vo = await userLoginAPI({ identifier, password })
+      const vo = await userLoginAPI({ identifier, password });
       setAuthTokens(
         { accessToken: vo.access_token, refreshToken: vo.refresh_token },
-        { persistent: rememberMe }
-      )
-      toast.success('Signed in successfully.')
-      navigate('/profile', { replace: true })
+        { persistent: rememberMe },
+      );
+      toast.success("Signed in successfully.");
+      navigate("/profile", { replace: true });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Network error'
-      if (msg.toLowerCase().includes(UNACTIVATED_MESSAGE) || msg.toLowerCase().includes('disabled')) {
-        toast.info('Account needs to be activated.')
-        navigate('/verify-email', { state: { identifier: identifier.trim() }, replace: true })
+      const msg = err instanceof Error ? err.message : "Network error";
+      if (
+        msg.toLowerCase().includes(UNACTIVATED_MESSAGE) ||
+        msg.toLowerCase().includes("disabled")
+      ) {
+        toast.info("Account needs to be activated.");
+        navigate("/verify-email", {
+          state: { identifier: identifier.trim() },
+          replace: true,
+        });
       } else {
-        setError(msg)
+        setError(msg);
       }
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4 pt-24 pb-12">
@@ -67,9 +73,7 @@ export default function Login() {
                 <line x1="15" y1="12" x2="3" y2="12" />
               </svg>
             </div>
-            <h1 className="text-2xl font-bold text-foreground">
-              Welcome Back
-            </h1>
+            <h1 className="text-2xl font-bold text-foreground">Welcome Back</h1>
             <p className="mt-2 text-sm text-muted-foreground">
               Sign in to continue to your account
             </p>
@@ -78,8 +82,17 @@ export default function Login() {
           {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-5">
             {error && (
-              <div className="flex items-center gap-2 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive" role="alert">
-                <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <div
+                className="flex items-center gap-2 rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive"
+                role="alert"
+              >
+                <svg
+                  className="h-4 w-4 shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
                   <circle cx="12" cy="12" r="10" />
                   <line x1="12" y1="8" x2="12" y2="12" />
                   <line x1="12" y1="16" x2="12.01" y2="16" />
@@ -90,7 +103,10 @@ export default function Login() {
 
             <div className="space-y-4">
               <div>
-                <label htmlFor="identifier" className="mb-1.5 block text-sm font-medium text-foreground">
+                <label
+                  htmlFor="identifier"
+                  className="mb-1.5 block text-sm font-medium text-foreground"
+                >
                   Username or Email
                 </label>
                 <input
@@ -107,7 +123,10 @@ export default function Login() {
               </div>
 
               <div>
-                <label htmlFor="password" className="mb-1.5 block text-sm font-medium text-foreground">
+                <label
+                  htmlFor="password"
+                  className="mb-1.5 block text-sm font-medium text-foreground"
+                >
                   Password
                 </label>
                 <input
@@ -134,7 +153,10 @@ export default function Login() {
                 />
                 <span>Remember me</span>
               </label>
-              <a href="#" className="text-sm font-medium text-primary hover:text-primary/80 transition-colors">
+              <a
+                href="#"
+                className="text-sm font-medium text-primary hover:text-primary/80 transition-colors"
+              >
                 Forgot password?
               </a>
             </div>
@@ -143,18 +165,33 @@ export default function Login() {
               type="submit"
               disabled={loading}
               className="btn-glow relative w-full rounded-lg py-3 text-sm font-semibold shadow-lg transition-all duration-200 hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-              style={{ backgroundColor: '#00A8E8', color: '#ffffff' }}
+              style={{ backgroundColor: "#00A8E8", color: "#ffffff" }}
             >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
-                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  <svg
+                    className="h-4 w-4 animate-spin"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    />
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    />
                   </svg>
                   Signing in...
                 </span>
               ) : (
-                'Sign In'
+                "Sign In"
               )}
             </button>
           </form>
@@ -171,7 +208,7 @@ export default function Login() {
 
           {/* Sign Up Link */}
           <p className="text-center text-sm text-muted-foreground">
-            Don't have an account?{' '}
+            Don't have an account?{" "}
             <Link
               to="/register"
               className="font-medium text-primary hover:text-primary/80 transition-colors"
@@ -182,5 +219,5 @@ export default function Login() {
         </div>
       </div>
     </div>
-  )
+  );
 }
