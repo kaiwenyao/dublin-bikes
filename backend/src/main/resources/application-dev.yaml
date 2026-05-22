@@ -1,0 +1,23 @@
+spring:
+  datasource:
+    url: ${DATABASE_URL:jdbc:mysql://localhost:3306/dublinbikes?useUnicode=true&characterEncoding=utf-8&serverTimezone=UTC}
+    username: ${DATABASE_USERNAME:root}
+    password: ${DATABASE_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 5000
+
+  jpa:
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+
+app:
+  chat-service:
+    base-url: ${CHAT_SERVICE_BASE_URL:http://localhost:8002}
+    connect-timeout-ms: 3000
+    read-timeout-ms: 30000
+    stream-timeout-ms: 120000
+    title-timeout-ms: 8000

@@ -1,0 +1,32 @@
+spring:
+  profiles:
+    active: test
+
+  datasource:
+    url: jdbc:h2:mem:dublinbikes;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+
+  flyway:
+    enabled: false
+
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    default-property-inclusion: ALWAYS
+
+app:
+  chat-service:
+    base-url: http://localhost:8002
+    connect-timeout-ms: 1000
+    read-timeout-ms: 5000
+    stream-timeout-ms: 10000
+    title-timeout-ms: 3000

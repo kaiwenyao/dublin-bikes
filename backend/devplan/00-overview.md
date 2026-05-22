@@ -3,6 +3,7 @@
 > **路径说明（2026-05-21 仓库重构后）**
 > 仓库已改为 monorepo 结构：根目录下分 `backend/`（Spring Boot）和 `frontend/` 两个独立工程。
 > 后续文档中出现的 `src/main/...`、`pom.xml`、`application.yaml` 等路径，**实际位置统一前缀 `backend/`**，例如：
+>
 > - `src/main/java/dev/kaiwen/bikes/` → `backend/src/main/java/dev/kaiwen/bikes/`
 > - `src/main/resources/application.yaml` → `backend/src/main/resources/application.yaml`
 > - `pom.xml` → `backend/pom.xml`
@@ -24,7 +25,7 @@
 
 ## 1. 项目背景与目的
 
-当前 `flask-app` 是一个 **Dublin Bikes（都柏林公共自行车）** 应用的后端 API，主要为前端（Vite/React 5173 端口）和移动端提供以下能力：
+一个 **Dublin Bikes（都柏林公共自行车）** 应用的后端 API，主要为前端（Vite/React 5173 端口）和移动端提供以下能力：
 
 1. **公共自行车数据查询**
    - 站点元数据（位置、容量、是否支持刷卡、是否奖励站点）
@@ -62,8 +63,8 @@
 
 - ✅ **不修改任何现有配置**（已检查的 `pom.xml`、`application.yaml`、`.gitignore`、`HELP.md`、`DublinBikesApplication.java` 等）。
 - ✅ 所有依赖建议都写在文档中，**等用户后续手动添加** 到 `pom.xml`。
-- ✅ 现有 `pom.xml` 已包含：`spring-boot-starter`, `-web`, `-test`, `lombok`。其余依赖在 `03-configuration.md` 中列出建议清单。
-- ✅ 主包 `dev.kaiwen.bikes` 已确立，新增包都在其下扩展。
+- ✅ 现有 `pom.xml` 已包含：`spring-boot-starter`, `-web`, `-test`, `lombok`。其余依赖在 `03-configuration-and-dependencies.md` 中列出建议清单。
+- ✅ 主包 `dev.kaiwen.bikes` 已确立；**技术分层**见 `01-architecture.md`（`controller` / `service` / `mapper` / `repository` / `model` / `dto` / `config` / `exception`），DTO 与 Entity 分离。
 
 ---
 
@@ -79,7 +80,7 @@
 | `journey_bp` | `/api/journey` | 1 | `JourneyController` |
 | `chat_bp` | `/api/chat` | 4 | `ChatController` |
 
-详细端点和请求/响应见模块文档（04 ~ 09）。
+详细端点和请求/响应见 `04-modules.md`。
 
 ### 3.2 数据库（MySQL，通过 Flask-Migrate / Alembic 管理）
 
@@ -103,7 +104,7 @@
 | 阿里云通义 Qwen（兼容 OpenAI 协议） | LLM 对话 | **独立 Python `chat-service`（LangChain）**，Spring 通过 `RestClient` + SSE 代理 |
 | SMTP（Flask-Mail） | 邮件 | `spring-boot-starter-mail` (JavaMailSender) |
 | MySQL | 持久化 | `spring-boot-starter-data-jpa` + `mysql-connector-j` |
-| 训练好的 scikit-learn `.pkl` 模型 | 自行车预测 | 见 `08-module-prediction.md`（推荐：将 ML 模型独立为 Python FastAPI 微服务，Spring Boot 通过 HTTP 调用；备选：导出为 ONNX 用 Java 加载） |
+| 训练好的 scikit-learn `.pkl` 模型 | 自行车预测 | 见 `04-modules.md` §6（推荐：将 ML 模型独立为 Python FastAPI 微服务，Spring Boot 通过 HTTP 调用；备选：导出为 ONNX 用 Java 加载） |
 
 ---
 
@@ -115,6 +116,7 @@
 | ORM | SQLAlchemy 2.x | Spring Data JPA + Hibernate |
 | 迁移 | Alembic (Flask-Migrate) | Flyway（推荐）或 Liquibase |
 | 校验 | Pydantic v2 DTO | `jakarta.validation` (Bean Validation 3) + `@Validated` |
+| 类型转换 | Pydantic / 手写 dict | MapStruct `*Mapper`（`componentModel = "spring"`） |
 | 配置 | `python-dotenv` + `config.py` | `application.yaml` + `@ConfigurationProperties` |
 | 安全 | 手写 JWT (PyJWT) + token_version | `spring-boot-starter-security` + `jjwt` / Spring Security OAuth2 Resource Server |
 | 邮件 | Flask-Mail + `ThreadPoolExecutor` | `spring-boot-starter-mail` + `@Async` |
@@ -138,7 +140,7 @@
 | **S5** | LLM 对话 | 部署独立 Python `chat-service`（LangChain + Qwen + `message_store` 读写）；Spring `ChatController` + `ChatService` 做 JWT 鉴权、`sessions` 表 ACL、SSE 代理；自动标题生成由 Spring 调用 `chat-service /title` |
 | **S6** | ML 预测服务 + 集成 | 部署独立 Python 预测微服务；Spring 端 `PredictionService` 通过 `RestClient` 调用、完整 E2E 联调、Postman/HTTPie 验证 |
 
-每个 Sprint 的细分任务、依赖和验收标准见 `11-migration-roadmap.md`。
+每个 Sprint 的细分任务、依赖和验收标准见 `05-testing-and-roadmap.md` §B。
 
 ---
 

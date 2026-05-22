@@ -66,10 +66,10 @@
 **目标**：能跑起来，连得上 DB，`/actuator/health` 200。
 
 任务：
-1. （手动）追加 `03-configuration-and-dependencies.md` §2 中数据访问、validation、actuator 依赖到 `pom.xml`。
+1. （手动）追加 `03-configuration-and-dependencies.md` §2 中数据访问、validation、actuator、MapStruct 依赖到 `pom.xml`。
 2. 合并 `application.yaml` 配置。
 3. 实现 `config/properties/*` 全部 `@ConfigurationProperties` 类。
-4. `common/api/ApiResponse`、`common/exception/GlobalExceptionHandler`。
+4. `dto/ApiResponse`、`exception/GlobalExceptionHandler`。
 5. Flyway baseline `V1__baseline.sql`（空）。
 6. `JpaConfig` + `EntityScan` + 主类 annotations。
 7. CI：`mvn verify` + jacoco 报告。
@@ -83,7 +83,7 @@
 任务：
 1. `Station`、`Availability`、`WeatherForecast` Entity。
 2. 对应 Repository（含 native query for "latest per station"）。
-3. Service / Controller / DTO（StationVO / AvailabilityVO / WeatherDataVO）。
+3. Service / Controller / DTO + MapStruct Mapper（StationVO / AvailabilityVO / WeatherDataVO）。
 4. WebMvc + Repository 测试覆盖率 ≥ 85%。
 
 **验收**：四个 GET 端点（不含 prediction）能用现有 Postman 用例打通，响应字段顺序、命名一致。
