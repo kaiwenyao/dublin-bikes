@@ -68,7 +68,7 @@
 任务：
 1. （手动）追加 `03-configuration-and-dependencies.md` §2 中数据访问、validation、actuator、MapStruct 依赖到 `pom.xml`。
 2. 合并 `application.yaml` 配置。
-3. 实现 `config/properties/*` 全部 `@ConfigurationProperties` 类。
+3. 实现 `dev.kaiwen.bikes.config` 下全部 `@ConfigurationProperties` 类（与 `01-architecture.md` §3 / §10 一致，不建 `properties/` 子包）。
 4. `dto/ApiResponse`、`exception/GlobalExceptionHandler`。
 5. Flyway baseline `V1__baseline.sql`（空）。
 6. `JpaConfig` + `EntityScan` + 主类 annotations。
@@ -141,7 +141,7 @@
 2. `PredictionClient` + `PredictionService`。
 3. `/api/stations/{n}/prediction` 端到端联调。
 4. Newman 跑全量 Postman 集合对比 Flask 输出。
-5. 完善 Dockerfile（Spring Boot 分层 + JRE）+ `docker-compose.yml`（app + mysql + prediction）。
+5. 完善 Dockerfile（Spring Boot 分层 + JRE）+ `docker-compose.yml`（app + mysql + chat-service + prediction，沿用 S5 已加入的 chat-service 服务）。
 6. README：开发、测试、部署、回退步骤。
 
 **验收**：`docker-compose up` 一键启动；Postman 全集合 100% pass；覆盖率 ≥ 80%。
