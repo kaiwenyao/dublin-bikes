@@ -46,6 +46,25 @@ pnpm-debug.log*
 .env.local
 .env.*.local
 
+# Local Spring Boot config (may contain real passwords / keys)
+application-dev.yaml
+application-dev.yml
+application-local.yaml
+application-local.yml
+**/application-dev.yaml
+**/application-dev.yml
+**/application-local.yaml
+**/application-local.yml
+
+# Keys and credential files
+*.pem
+*.key
+*.p12
+*.jks
+credentials.json
+secrets.yaml
+secrets.yml
+
 # ===== IDE / Editor =====
 ### IntelliJ IDEA ###
 .idea/
