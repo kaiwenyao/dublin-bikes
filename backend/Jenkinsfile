@@ -146,10 +146,14 @@ spec:
 
                 stage('5. Deploy to Server') {
                     when {
-                        allOf {
-                            branch 'main'
-                            not { changeRequest() }
-                            expression { return params.DEPLOY_TO_SERVER }
+                        expression {
+                            def rawBranch = env.BRANCH_NAME ?: env.GIT_BRANCH ?: ''
+                            def branch = rawBranch.replaceFirst(/^origin\//, '')
+                            def isMain = branch == 'main'
+                            def isPR = env.CHANGE_ID != null
+                            def deployFlag = params.DEPLOY_TO_SERVER
+                            echo "Deploy gate: branch='${branch}' (BRANCH_NAME='${env.BRANCH_NAME}', GIT_BRANCH='${env.GIT_BRANCH}'), isMain=${isMain}, isPR=${isPR}, DEPLOY_TO_SERVER=${deployFlag}"
+                            return isMain && !isPR && deployFlag
                         }
                     }
                     environment {
