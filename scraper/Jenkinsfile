@@ -44,11 +44,11 @@ spec:
     }
 
     parameters {
-        string(name: 'IMAGE_NAME', defaultValue: 'kaiwenyao/scraper', description: 'Docker image name')
+        string(name: 'IMAGE_NAME', defaultValue: 'kaiwenyao/dublin-bikes-scraper', description: 'Docker image name')
         string(name: 'IMAGE_TAG', defaultValue: '', description: 'Image tag (empty means BUILD_NUMBER)')
         booleanParam(name: 'PUSH_IMAGE', defaultValue: true, description: 'Push image to registry')
         booleanParam(name: 'DEPLOY_TO_SERVER', defaultValue: false, description: 'Deploy container to remote server')
-        string(name: 'CONTAINER_NAME', defaultValue: 'scraper', description: 'Container name on remote server')
+        string(name: 'CONTAINER_NAME', defaultValue: 'dublin-bikes-scraper', description: 'Container name on remote server')
         string(name: 'CONTAINER_ENV_FILE', defaultValue: '/opt/scraper/.env', description: 'Env file path on remote server')
         string(name: 'SSH_KEY_CREDENTIALS_ID', defaultValue: 'server-ssh-key', description: 'Jenkins SSH key credential ID')
     }
