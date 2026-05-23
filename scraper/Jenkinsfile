@@ -79,7 +79,6 @@ spec:
                         container('python') {
                             dir('scraper') {
                                 sh '''
-                                apt-get update && apt-get install -y gcc libpq-dev
                                 python --version
                                 python -m venv .venv
                                 . .venv/bin/activate
