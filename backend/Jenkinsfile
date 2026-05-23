@@ -173,7 +173,7 @@ spec:
                                 ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no "${SSH_USER}@${SERVER_HOST}" "mkdir -p ${CONFIG_DIR}"
 
                                 scp -i "${SSH_KEY}" -o StrictHostKeyChecking=no "${CONFIG_FILE}" "${SSH_USER}@${SERVER_HOST}:${CONTAINER_CONFIG_FILE}"
-                                ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no "${SSH_USER}@${SERVER_HOST}" "chown 10001:10001 '${CONTAINER_CONFIG_FILE}' && chmod 0400 '${CONTAINER_CONFIG_FILE}'"
+                                ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no "${SSH_USER}@${SERVER_HOST}" "SUDO=\$(command -v sudo >/dev/null 2>&1 && echo sudo || true); \$SUDO chown 10001:10001 '${CONTAINER_CONFIG_FILE}' 2>/dev/null || true; \$SUDO chmod 0444 '${CONTAINER_CONFIG_FILE}'"
 
                                 PASS_B64=$(printf '%s' "${DOCKER_PASS}" | base64)
                                 USER_B64=$(printf '%s' "${DOCKER_USER}" | base64)
