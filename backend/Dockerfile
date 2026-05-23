@@ -15,7 +15,7 @@ WORKDIR /app
 ENV SPRING_PROFILES_ACTIVE=prod \
     TZ=UTC
 
-RUN groupadd --system app && useradd --system --gid app app
+RUN groupadd --system --gid 10001 app && useradd --system --uid 10001 --gid app app
 COPY --from=build /app/target/*.jar app.jar
 RUN chown app:app app.jar
 USER app
