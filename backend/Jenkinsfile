@@ -47,7 +47,7 @@ spec:
         string(name: 'IMAGE_NAME', defaultValue: 'kaiwenyao/dublin-bikes-backend', description: 'Docker image name')
         string(name: 'IMAGE_TAG', defaultValue: '', description: 'Image tag override (empty means branch-gitHash-jBUILD_NUMBER, e.g. main-abc1234-j88)')
         booleanParam(name: 'PUSH_IMAGE', defaultValue: true, description: 'Push image to registry')
-        booleanParam(name: 'DEPLOY_TO_SERVER', defaultValue: false, description: 'Deploy container to remote server')
+        booleanParam(name: 'DEPLOY_TO_SERVER', defaultValue: true, description: 'Deploy container to remote server')
         string(name: 'CONTAINER_NAME', defaultValue: 'dublin-bikes-backend', description: 'Container name on remote server')
         string(name: 'CONTAINER_CONFIG_FILE', defaultValue: '/opt/dublin-bikes-backend/application-prod.yaml', description: 'Spring application-prod.yaml path on remote server')
         string(name: 'DOCKER_NETWORK', defaultValue: 'dublin-bikes-network', description: 'Docker network for deployment')
