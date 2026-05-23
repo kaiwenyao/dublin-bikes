@@ -77,14 +77,16 @@ spec:
                 stage('2. Python Syntax Check') {
                     steps {
                         container('python') {
-                            sh '''
-                            python --version
-                            python -m venv .venv
-                            . .venv/bin/activate
-                            pip install --upgrade pip
-                            pip install -r requirements.txt
-                            python -m py_compile main_scraper.py fetch_stations.py config.py database.py models.py
-                            '''
+                            dir('scraper') {
+                                sh '''
+                                python --version
+                                python -m venv .venv
+                                . .venv/bin/activate
+                                pip install --upgrade pip
+                                pip install -r requirements.txt
+                                python -m py_compile main_scraper.py fetch_stations.py config.py database.py models.py
+                                '''
+                            }
                         }
                     }
                 }
@@ -107,14 +109,16 @@ spec:
                                     passwordVariable: 'DOCKER_PASS'
                                 )
                             ]) {
-                                sh '''
-                                echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin
-                                docker build -t ${FULL_IMAGE} .
-                                if [ "${PUSH_IMAGE}" = "true" ] || [ "${DEPLOY_TO_SERVER}" = "true" ]; then
-                                  docker push ${FULL_IMAGE}
-                                fi
-                                docker logout || true
-                                '''
+                                dir('scraper') {
+                                    sh '''
+                                    echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin
+                                    docker build -t ${FULL_IMAGE} .
+                                    if [ "${PUSH_IMAGE}" = "true" ] || [ "${DEPLOY_TO_SERVER}" = "true" ]; then
+                                      docker push ${FULL_IMAGE}
+                                    fi
+                                    docker logout || true
+                                    '''
+                                }
                             }
                         }
                     }
