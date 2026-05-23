@@ -12,9 +12,9 @@ engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
 
 @event.listens_for(engine, "connect")
-def _set_connection_utc(dbapi_connection, connection_record) -> None:
+def _set_connection_utc(dbapi_connection, _connection_record) -> None:
     """Pin session timezone to UTC so drivers never reinterpret naive UTC values."""
-    dialect = connection_record.dialect.name
+    dialect = engine.dialect.name
     cursor = dbapi_connection.cursor()
     try:
         if dialect == "postgresql":
