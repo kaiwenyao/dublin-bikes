@@ -198,7 +198,7 @@ DOCKER_NETWORK=$(echo "$NETWORK_B64" | base64 -d)
 
 echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
 docker pull "$FULL_IMAGE"
-docker network inspect "$DOCKER_NETWORK" >/dev/null 2>&1 || docker network create "$DOCKER_NETWORK"
+docker network inspect "$DOCKER_NETWORK" >/dev/null 2>&1 || docker network create --ipv6 "$DOCKER_NETWORK"
 docker rm -f "$CONTAINER_NAME" || true
 docker run -d \
   --name "$CONTAINER_NAME" \
