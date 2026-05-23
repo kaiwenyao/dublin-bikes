@@ -45,7 +45,7 @@ spec:
 
     parameters {
         string(name: 'IMAGE_NAME', defaultValue: 'kaiwenyao/dublin-bikes-scraper', description: 'Docker image name')
-        string(name: 'IMAGE_TAG', defaultValue: '', description: 'Image tag (empty means BUILD_NUMBER)')
+        string(name: 'IMAGE_TAG', defaultValue: '', description: 'Image tag override (empty means branch-gitHash-jBUILD_NUMBER, e.g. main-abc1234-j88)')
         booleanParam(name: 'PUSH_IMAGE', defaultValue: true, description: 'Push image to registry')
         booleanParam(name: 'DEPLOY_TO_SERVER', defaultValue: false, description: 'Deploy container to remote server')
         string(name: 'CONTAINER_NAME', defaultValue: 'dublin-bikes-scraper', description: 'Container name on remote server')
@@ -98,7 +98,12 @@ spec:
                     steps {
                         container('docker') {
                             script {
-                                def finalTag = params.IMAGE_TAG?.trim() ? params.IMAGE_TAG.trim() : env.BUILD_NUMBER
+                                def branch = (env.BRANCH_NAME ?: env.GIT_BRANCH ?: 'unknown')
+                                    .replaceFirst(/^origin\//, '')
+                                    .replaceAll('/', '-')
+                                def gitHash = (env.GIT_COMMIT ?: '0000000').take(7)
+                                def defaultTag = "${branch}-${gitHash}-j${env.BUILD_NUMBER}"
+                                def finalTag = params.IMAGE_TAG?.trim() ? params.IMAGE_TAG.trim() : defaultTag
                                 env.FULL_IMAGE = "${params.IMAGE_NAME}:${finalTag}"
                             }
 
