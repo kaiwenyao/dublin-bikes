@@ -55,10 +55,14 @@ pnpm-debug.log*
 # Local Spring Boot config (may contain real passwords / keys)
 application-dev.yaml
 application-dev.yml
+application-prod.yaml
+application-prod.yml
 application-local.yaml
 application-local.yml
 **/application-dev.yaml
 **/application-dev.yml
+**/application-prod.yaml
+**/application-prod.yml
 **/application-local.yaml
 **/application-local.yml
 
