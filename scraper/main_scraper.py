@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import datetime
 import time
 
 from config import RETRY_INTERVAL_SECONDS, SCRAPE_INTERVAL_SECONDS, WEATHER_SCRAPE_INTERVAL_SECONDS
@@ -7,6 +6,7 @@ from database import SessionLocal
 from fetch_stations import fetch_stations
 from fetch_weather import fetch_weather_and_store
 from models import Availability, Station
+from time_utils import format_log_ts, from_unix_ms_utc, utc_now, utc_now_naive
 
 
 def scrape_stations():
@@ -27,8 +27,8 @@ def scrape_stations():
       "last_update": 1770053684000
     }
     """
-    started_at = datetime.datetime.now()
-    print(f"[{started_at.strftime('%Y-%m-%d %H:%M:%S')}] Starting scrape...")
+    started_at = utc_now()
+    print(f"[{format_log_ts(started_at)}] Starting scrape...")
 
     raw = fetch_stations()
     # Compatibility: return list directly, or wrapped in {"stations": [...]} etc.
@@ -63,15 +63,14 @@ def scrape_stations():
                 session.add(station)
 
             # --- Step 2: Process Availability (dynamic data) ---
-            dt_object = datetime.datetime.fromtimestamp(item["last_update"] / 1000.0)
             availability = Availability(
                 number=item["number"],
                 available_bikes=item["available_bikes"],
                 available_bike_stands=item["available_bike_stands"],
                 status=item["status"],
                 last_update=item["last_update"],
-                timestamp=dt_object,
-                requested_at=datetime.datetime.now(datetime.timezone.utc),
+                timestamp=from_unix_ms_utc(item["last_update"]),
+                requested_at=utc_now_naive(),
             )
             session.add(availability)
 
@@ -82,10 +81,10 @@ def scrape_stations():
     finally:
         session.close()
 
-    finished_at = datetime.datetime.now()
+    finished_at = utc_now()
     duration_sec = (finished_at - started_at).total_seconds()
     print(
-        f"[{finished_at.strftime('%Y-%m-%d %H:%M:%S')}] Done | "
+        f"[{format_log_ts(finished_at)}] Done | "
         f"Fetched {total} station records, {new_stations} new stations, wrote {total} availability records | "
         f"Elapsed: {duration_sec:.2f}s"
     )
@@ -102,8 +101,7 @@ def weather_worker():
             fetch_weather_and_store()
             time.sleep(WEATHER_SCRAPE_INTERVAL_SECONDS)
         except Exception as e:
-            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f"[{ts}] Weather thread error: {e}")
+            print(f"[{format_log_ts()}] Weather thread error: {e}")
             time.sleep(RETRY_INTERVAL_SECONDS)
 
 # Main loop (table schema is maintained by flask-app migrations; run `flask db upgrade` first)
@@ -118,6 +116,5 @@ if __name__ == "__main__":
             # Default rest interval is 5 minutes, can be overridden via .env
             time.sleep(SCRAPE_INTERVAL_SECONDS)
         except Exception as e:
-            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f"[{ts}] Station scrape error: {e}")
+            print(f"[{format_log_ts()}] Station scrape error: {e}")
             time.sleep(RETRY_INTERVAL_SECONDS)

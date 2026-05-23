@@ -1,10 +1,10 @@
-import datetime
 import requests
 from sqlalchemy import delete
 
 from config import OPENWEATHER_API_KEY, WEATHER_CITY, OPENWEATHER_GEOCODING_URL, OPENWEATHER_ONECALL_URL, OPENWEATHER_FORECAST_URL
 from database import SessionLocal
 from models_weather import WeatherForecast
+from time_utils import floor_hour_utc_naive, format_log_ts, from_unix_s_utc, utc_now, utc_now_naive
 
 
 class WeatherScraperError(Exception):
@@ -42,8 +42,8 @@ def fetch_weather_and_store():
         print("OPENWEATHER_API_KEY is not configured, skipping weather scrape.")
         return
 
-    started_at = datetime.datetime.now()
-    print(f"[{started_at.strftime('%Y-%m-%d %H:%M:%S')}] Starting weather scrape ({WEATHER_CITY})...")
+    started_at = utc_now()
+    print(f"[{format_log_ts(started_at)}] Starting weather scrape ({WEATHER_CITY})...")
 
     try:
         # 1. Dynamically get city latitude and longitude
@@ -77,15 +77,12 @@ def fetch_weather_and_store():
 
         # 3. Organize the list of hourly data to write into the database
         forecast_list = []
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-        
-        # Process OneCall hourly data (48 hours)
+
         if "hourly" in data:
             for item in data["hourly"]:
-                dt = datetime.datetime.fromtimestamp(item["dt"], tz=datetime.timezone.utc)
                 weather_info = item["weather"][0] if "weather" in item and item["weather"] else {}
                 forecast_list.append({
-                    "forecast_time": dt.replace(tzinfo=None), # SQLAlchemy DateTime usually assumes naive local or UTC depending on the engine
+                    "forecast_time": from_unix_s_utc(item["dt"]),
                     "temperature": item.get("temp", 0),
                     "weather_code": weather_info.get("id", 800),
                     "description": weather_info.get("description", ""),
@@ -103,10 +100,9 @@ def fetch_weather_and_store():
         # Process 2.5/forecast 3-hour list (usually 5 days, 40 records)
         elif "list" in data:
             for item in data["list"]:
-                 dt = datetime.datetime.fromtimestamp(item["dt"], tz=datetime.timezone.utc)
                  weather_info = item["weather"][0] if "weather" in item and item["weather"] else {}
                  forecast_list.append({
-                    "forecast_time": dt.replace(tzinfo=None),
+                    "forecast_time": from_unix_s_utc(item["dt"]),
                     "temperature": item["main"].get("temp", 0),
                     "weather_code": weather_info.get("id", 800),
                     "description": weather_info.get("description", ""),
@@ -123,7 +119,7 @@ def fetch_weather_and_store():
                 })
         
         if not forecast_list:
-            print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Weather API returned no hourly data.")
+            print(f"[{format_log_ts()}] Weather API returned no hourly data.")
             return
 
         # 4. Upsert logic + delete old data
@@ -131,7 +127,7 @@ def fetch_weather_and_store():
         try:
             # Clean up expired forecasts (earlier than current UTC hour)
             # The current hour on the dot
-            current_hour = now_utc.replace(minute=0, second=0, microsecond=0, tzinfo=None)
+            current_hour = floor_hour_utc_naive()
             session.execute(delete(WeatherForecast).where(WeatherForecast.forecast_time < current_hour))
             
             inserted = 0
@@ -158,7 +154,7 @@ def fetch_weather_and_store():
                     existing.wind_speed = item["wind_speed"]
                     existing.wind_deg = item["wind_deg"]
                     existing.pop = item["pop"]
-                    existing.fetched_at = datetime.datetime.utcnow()
+                    existing.fetched_at = utc_now_naive()
                     updated += 1
                 else:
                     # Insert
@@ -177,17 +173,17 @@ def fetch_weather_and_store():
                         wind_speed=item["wind_speed"],
                         wind_deg=item["wind_deg"],
                         pop=item["pop"],
-                        fetched_at=datetime.datetime.utcnow()
+                        fetched_at=utc_now_naive()
                     )
                     session.add(new_forecast)
                     inserted += 1
             
             session.commit()
             
-            finished_at = datetime.datetime.now()
+            finished_at = utc_now()
             duration_sec = (finished_at - started_at).total_seconds()
             print(
-                f"[{finished_at.strftime('%Y-%m-%d %H:%M:%S')}] Weather scrape done | "
+                f"[{format_log_ts(finished_at)}] Weather scrape done | "
                 f"Insert: {inserted}, Update: {updated} | "
                 f"Elapsed: {duration_sec:.2f}s"
             )
@@ -199,7 +195,7 @@ def fetch_weather_and_store():
             session.close()
 
     except Exception as e:
-        print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Weather scrape error: {e}")
+        print(f"[{format_log_ts()}] Weather scrape error: {e}")
 
 if __name__ == "__main__":
     fetch_weather_and_store()

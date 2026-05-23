@@ -6,6 +6,7 @@ from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
+from time_utils import utc_now_naive
 
 
 class Station(Base):
@@ -39,8 +40,11 @@ class Availability(Base):
     available_bike_stands: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(20))
     last_update: Mapped[int] = mapped_column(BigInteger)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    # Timestamp when this record was requested (scraped)
-    requested_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, comment="Timestamp when this record was requested")
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=utc_now_naive,
+        comment="UTC scrape time (naive DATETIME, application writes UTC)",
+    )
 
     station: Mapped[Station] = relationship("Station", back_populates="availabilities")
