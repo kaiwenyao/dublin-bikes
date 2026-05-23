@@ -4,13 +4,14 @@ from sqlalchemy import DateTime, Float, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
+from time_utils import utc_now_naive
 
 
 class WeatherForecast(Base):
     __tablename__ = "weather_forecast"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    # The datetime this forecast is valid for (e.g. 2023-10-01 14:00:00)
+    # Forecast valid time as naive UTC (e.g. 2023-10-01 14:00:00)
     # We will use this to query the next 5 hours and also Upsert existing forecasts.
     forecast_time: Mapped[datetime] = mapped_column(DateTime, unique=True, index=True)
     
@@ -37,4 +38,4 @@ class WeatherForecast(Base):
     wind_deg: Mapped[int] = mapped_column(Integer, nullable=True)
     pop: Mapped[float] = mapped_column(Float, nullable=True, default=0.0)
 
-    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)

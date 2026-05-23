@@ -84,7 +84,7 @@ spec:
                                 . .venv/bin/activate
                                 pip install --upgrade pip
                                 pip install -r requirements.txt
-                                python -m py_compile main_scraper.py fetch_stations.py config.py database.py models.py
+                                python -m py_compile main_scraper.py fetch_stations.py fetch_weather.py config.py database.py models.py models_weather.py time_utils.py
                                 '''
                             }
                         }
@@ -180,6 +180,7 @@ docker rm -f "$CONTAINER_NAME" || true
 docker run -d \
   --name "$CONTAINER_NAME" \
   --restart unless-stopped \
+  -e TZ=UTC \
   --env-file "$CONTAINER_ENV_FILE" \
   "$FULL_IMAGE"
 REMOTE
