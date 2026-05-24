@@ -64,8 +64,21 @@ public class JwtService {
             if (!expectedType.equals(type)) {
                 throw new AuthException("invalid token");
             }
-            Integer ver = claims.get("ver", Integer.class);
-            return new JwtTokenClaims(Integer.parseInt(claims.getSubject()), ver, type);
+            String subject = claims.getSubject();
+            if (subject == null || subject.isBlank()) {
+                throw new AuthException("invalid token");
+            }
+            Number verClaim = claims.get("ver", Number.class);
+            if (verClaim == null) {
+                throw new AuthException("invalid token");
+            }
+            int userId;
+            try {
+                userId = Integer.parseInt(subject);
+            } catch (NumberFormatException ex) {
+                throw new AuthException("invalid token");
+            }
+            return new JwtTokenClaims(userId, verClaim.intValue(), type);
         } catch (JwtException | IllegalArgumentException ex) {
             throw new AuthException("invalid token");
         }
