@@ -1,6 +1,8 @@
 # 04 — 业务模块详解
 
 > 所有模块以 **保持 API 完全兼容** 为铁律。本文件按 模块 / 端点 / 请求 / 响应 / Service 关键逻辑 / 关键注意点 组织。来源已在每节标注 Flask 源文件路径。
+>
+> 当前代码库尚未实现 Controller / Service 层。本文件中的端点与业务流程仍是后续目标；已经落地的部分包括实体、Repository、请求/响应 DTO、`StationMapper` / `UserMapper`、全局异常处理和 `ChatServiceProperties` / `RestClient` 配置。
 
 ---
 
@@ -78,8 +80,8 @@ List<Availability> findLatestPerStation();
 
 ### 1.4 异常映射
 
-- station not found → `{"code":1,"msg":"station not found","data":null}` HTTP 404（**严格复刻 Flask** —— Postman 回归用例对 `code:1` 强断言）。
-- 在 `dto.ApiCodes` 中新增具名常量 `STATION_NOT_FOUND = 1`，业务码值保持 `1` 与 Flask 兼容，但代码里**不得**直接写裸数字 `1`（与 `01-architecture.md` §10 "禁止魔法数字" 约定一致）。同一常量在 `04 §6` Prediction 模块复用。
+- station not found → 目标兼容响应为 `{"code":1,"msg":"station not found","data":null}` HTTP 404（复刻 Flask）。
+- 当前 `dto.ApiCodes` 尚未包含 `STATION_NOT_FOUND = 1`。实现 Station / Prediction Service 前应先补该常量；业务码值保持 `1` 与 Flask 兼容，但代码里不得直接写裸数字 `1`。
 
 ---
 
@@ -125,7 +127,7 @@ if (rows.isEmpty()) throw new BusinessException(ApiCodes.WEATHER_ERROR, "No weat
 
 ### 2.4 DTO
 
-由 `WeatherMapper`（MapStruct）转换为上述 JSON 对应的 VO；用 `@JsonInclude(JsonInclude.Include.ALWAYS)` 保留 `null` 字段。
+当前已有 Weather VO：`WeatherDataVO`、`WeatherCurrentVO`、`WeatherHourlyVO`、`WeatherConditionVO`，并用 `@JsonInclude(JsonInclude.Include.ALWAYS)` 保留 `null` 字段。`WeatherMapper` 尚未实现；接入 Weather Service 时再补 MapStruct 或明确的组装逻辑。
 
 ---
 
@@ -150,7 +152,21 @@ B. 坐标：
 {"start":{"lat":53.34,"lon":-6.26},"end":{"lat":53.33,"lon":-6.25}}
 ```
 
-### 3.3 响应
+### 3.3 当前 DTO 与目标响应
+
+当前代码中的 `JourneyResponseDTO` 是扁平结构：
+
+```java
+public record JourneyResponseDTO(
+        JourneyStationLegVO startStation,
+        JourneyStationLegVO endStation,
+        JourneyCyclingRouteVO cyclingRoute,
+        int totalDuration) {}
+```
+
+`JourneyStationLegVO` 当前字段为 `number`、`name`、`walkingTime`、`availableBikes`、`availableBikeStands`，尚未包含文档早期设计里的 `address` / `coords`。
+
+后续若要与前端 `JourneyPlanResponse` 的嵌套结构完全对齐，目标响应仍应调整为：
 
 ```json
 {"code":0,"msg":"ok","data":{
@@ -524,7 +540,7 @@ import os, json
 
 app = FastAPI()
 
-DB_URL = os.environ["CHAT_DB_URL"]              # mysql+pymysql://...
+DB_URL = os.environ["CHAT_DB_URL"]              # postgresql+psycopg://...
 QWEN_KEY = os.environ["ALIYUN_API_KEY"]
 QWEN_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
@@ -573,13 +589,13 @@ def history(sid: str):
 **契约约束**：
 
 - `session_id` 始终由 Spring 生成（含 `user_id` 前缀），Python 端不做业务校验、不写 `sessions` 表。
-- `message_store` 表 schema / 列名沿用 LangChain 默认（`id INT PK`、`session_id TEXT`、`message JSON`），Spring `Flyway` baseline 把它视为存量表。
+- `message_store` 表 schema / 列名沿用 LangChain 默认（`id INT PK`、`session_id TEXT`、`message JSONB`），Spring `Flyway` baseline 创建该表但不映射 JPA 实体。
 - LangChain 版本锁定后写入 `chat-service/README.md`；升级前必跑兼容性回归（见 R1）。
 
 **部署**：
 
 - Dockerfile（`python:3.11-slim` + `uvicorn main:app --host 0.0.0.0 --port 8002`）。
-- `docker-compose.yml` 增加服务 `chat-service`，与 `app`（Spring）、`mysql` 共网络。
+- `docker-compose.yml` 增加服务 `chat-service`，与 `app`（Spring）、PostgreSQL 共网络。
 - 端口：默认 `8002`（与 `prediction-service:8001` 错开）。
 
 ---
@@ -631,6 +647,8 @@ def predict(payload: dict):
 ```
 
 Spring 端：
+> 以下代码片段是后续实现目标，假设已先补齐 `ApiCodes.STATION_NOT_FOUND = 1`。
+
 ```java
 @Service
 public class PredictionService {

@@ -51,7 +51,7 @@
 
 6. **LLM 对话助手**
    - 阿里云通义 Qwen（兼容 OpenAI 协议）
-   - LangChain 记忆 (`SQLChatMessageHistory` → MySQL `message_store` 表)
+   - LangChain 记忆 (`SQLChatMessageHistory` → PostgreSQL `message_store` 表)
    - 普通 + SSE 流式响应、会话列表、会话历史、自动生成会话标题
    - **重构后**：LangChain 逻辑保留在 **独立 Python 微服务（`chat-service`）**，Spring Boot 仅做 JWT 鉴权、`sessions` 表 ACL 维护、HTTP/SSE 代理
 
@@ -59,12 +59,14 @@
 
 ---
 
-## 2. 项目约束（重要 — 来自用户直接指示）
+## 2. 当前后端实现状态
 
-- ✅ **不修改任何现有配置**（已检查的 `pom.xml`、`application.yaml`、`.gitignore`、`HELP.md`、`DublinBikesApplication.java` 等）。
-- ✅ 所有依赖建议都写在文档中，**等用户后续手动添加** 到 `pom.xml`。
-- ✅ 现有 `pom.xml` 已包含：`spring-boot-starter`, `-web`, `-test`, `lombok`。其余依赖在 `03-configuration-and-dependencies.md` 中列出建议清单。
-- ✅ 主包 `dev.kaiwen.bikes` 已确立；**技术分层**见 `01-architecture.md`（`controller` / `service` / `mapper` / `repository` / `model` / `dto` / `config` / `exception`），DTO 与 Entity 分离。
+- ✅ 主包 `dev.kaiwen.bikes` 已确立；启动类已启用 `@ConfigurationPropertiesScan`、`@EntityScan`、`@EnableJpaRepositories`。
+- ✅ `pom.xml` 已包含 Spring Web、Spring Data JPA、Bean Validation、PostgreSQL driver、Flyway、MapStruct、Lombok、H2 test 依赖。
+- ✅ `application.yaml` 已包含 Jackson `SNAKE_CASE`、JPA `validate`、Flyway 和默认 `dev` profile；`application-dev.yaml` / `application-prod.yaml` 负责 PostgreSQL 数据源和 `app.chat-service`。
+- ✅ 已实现的包：`model`、`repository`、`mapper`、`dto`、`config`、`exception`。
+- ⏳ 尚未实现的包：`controller`、`service`、`security`、`mail`、Google Maps / prediction / chat 代理客户端等业务编排层。
+- ✅ DTO 与 Entity 已分离；当前仅有 `StationMapper` 和 `UserMapper`，Weather/Journey/Chat 的业务 Mapper 尚未落地。
 
 ---
 
@@ -82,7 +84,7 @@
 
 详细端点和请求/响应见 `04-modules.md`。
 
-### 3.2 数据库（MySQL，通过 Flask-Migrate / Alembic 管理）
+### 3.2 数据库（PostgreSQL，通过 Spring Boot Flyway 管理）
 
 | 表 | Flask 模型 | 说明 |
 |---|---|---|
@@ -91,7 +93,7 @@
 | `user` | `User` | 用户；6 位激活码 + 64 字符 token、`token_version` 实现 JWT 失效 |
 | `weather_forecast` | `WeatherForecast` | 已抓取的天气预报缓存 |
 | `sessions` | `Session` | LLM 会话元数据（id, user_id, title, 时间戳） |
-| `message_store` | `ChatHistory` | LangChain 默认会话消息表（`session_id`, `message` JSON） |
+| `message_store` | Python chat-service 独占 | LangChain 默认会话消息表（`session_id`, `message` JSONB），Spring 不映射 JPA 实体 |
 
 字段映射详见 `02-data-model.md`。
 
@@ -103,7 +105,7 @@
 | Google Maps Distance Matrix / Geocoding | 行程规划 | `RestClient` + 自实现 retry / Resilience4j |
 | 阿里云通义 Qwen（兼容 OpenAI 协议） | LLM 对话 | **独立 Python `chat-service`（LangChain）**，Spring 通过 `RestClient` + SSE 代理 |
 | SMTP（Flask-Mail） | 邮件 | `spring-boot-starter-mail` (JavaMailSender) |
-| MySQL | 持久化 | `spring-boot-starter-data-jpa` + `mysql-connector-j` |
+| PostgreSQL | 持久化 | `spring-boot-starter-data-jpa` + `postgresql` driver |
 | 训练好的 scikit-learn `.pkl` 模型 | 自行车预测 | 见 `04-modules.md` §6（推荐：将 ML 模型独立为 Python FastAPI 微服务，Spring Boot 通过 HTTP 调用；备选：导出为 ONNX 用 Java 加载） |
 
 ---
@@ -114,7 +116,7 @@
 |---|---|---|
 | Web 框架 | Flask Blueprints | `spring-boot-starter-web` + `@RestController` |
 | ORM | SQLAlchemy 2.x | Spring Data JPA + Hibernate |
-| 迁移 | Alembic (Flask-Migrate) | Flyway（推荐）或 Liquibase |
+| 迁移 | Alembic (Flask-Migrate) | Flyway（已采用，`V1__baseline.sql` 为 PostgreSQL DDL） |
 | 校验 | Pydantic v2 DTO | `jakarta.validation` (Bean Validation 3) + `@Validated` |
 | 类型转换 | Pydantic / 手写 dict | MapStruct `*Mapper`（`componentModel = "spring"`） |
 | 配置 | `python-dotenv` + `config.py` | `application.yaml` + `@ConfigurationProperties` |
@@ -147,10 +149,10 @@
 ## 6. 验收标准（迁移完成的定义）
 
 1. **API 兼容**：原 Postman 集合 `Flask App API.postman_collection.json` 中所有用例对新服务返回的 **HTTP 状态码、响应体结构（`{code, msg, data}` 包裹）、字段命名（snake_case）** 与 Flask 完全一致。
-2. **数据兼容**：连接现有 MySQL 数据库直接可用，无需 schema 变更（首版 Flyway 仅做 baseline）。
+2. **数据兼容**：Spring 端当前目标库为 PostgreSQL；schema 由 Flyway `V1__baseline.sql` 创建并由 Hibernate `ddl-auto=validate` 校验。
 3. **行为兼容**：JWT 旧 token 在 `logout` 后立即失效；邮件验证码 5 分钟过期、60 秒重发节流；行程返回 25 (5×5) 候选中的全局最小用时；LLM 首条消息触发标题生成。
 4. **测试覆盖率 ≥ 80%**（行覆盖；service / controller 层为重点）。
-5. **本地 `docker-compose up` 可一键启动**（应用 + MySQL）。
+5. **本地 `docker-compose up` 可一键启动**（应用 + PostgreSQL + 后续 chat-service / prediction-service）。
 
 ---
 

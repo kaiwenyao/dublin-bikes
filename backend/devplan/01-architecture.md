@@ -23,7 +23,7 @@ Flask 单体按 Blueprint 组织路由；Spring Boot 重构采用 **经典分层
 │                  仅数据访问；复杂查询用 @Query / Specification     │
 ├─────────────────────────────────────────────────────────────────┤
 │  model/          @Entity                                         │
-│                  与 MySQL 表一一对应（JPA 持久化模型）              │
+│                  与 PostgreSQL 表一一对应（JPA 持久化模型）         │
 ├─────────────────────────────────────────────────────────────────┤
 │  dto/            request/ + response/ + ApiResponse / ApiCodes   │
 │                  API 契约层，禁止泄漏 @Entity 到 HTTP 边界          │
@@ -60,18 +60,14 @@ Flask 单体按 Blueprint 组织路由；Spring Boot 重构采用 **经典分层
 
 ## 3. 当前包结构（与代码库一致）
 
-截至文档编写时，**已实现** 的 Java 源码树如下（`controller/` 为占位，待 Sprint 接入）：
+截至当前代码，**已实现** 的 Java 源码树如下。`controller/` 与 `service/` 仍未创建，业务端点尚未接入：
 
 ```
 dev.kaiwen.bikes
 ├── DublinBikesApplication.java
-├── controller/                    # （占位）StationController, UserController, ...
-├── service/
-│   └── StationService, UserService, WeatherService, ...
 ├── mapper/
 │   ├── StationMapper.java
-│   ├── UserMapper.java
-│   └── WeatherMapper.java
+│   └── UserMapper.java
 ├── repository/                    # 5 个 JpaRepository 接口
 │   ├── StationRepository.java
 │   ├── AvailabilityRepository.java
@@ -117,6 +113,12 @@ dev.kaiwen.bikes
 @EnableJpaRepositories(basePackages = "dev.kaiwen.bikes.repository")
 public class DublinBikesApplication { ... }
 ```
+
+**尚未落地但仍是目标结构的包**：
+
+- `controller/`：`StationController`、`UserController`、`WeatherController`、`JourneyController`、`ChatController`。
+- `service/`：业务编排、事务边界、外部 HTTP 调用和邮件/JWT 等逻辑。
+- `security/` / `mail/` / `integration/`：可在实现 S3+ 时按需增加；当前代码库未创建。
 
 ---
 
@@ -207,13 +209,15 @@ public record ApiResponse<T>(int code, String msg, T data) {
 | 常量 | 值 | 场景 |
 |---|---|---|
 | `SUCCESS` | 0 | 成功 |
-| `STATION_NOT_FOUND` | 1 | 站点不存在（Station / Prediction 模块复用，复刻 Flask `code:1`） |
 | `VALIDATION_ERROR` | 40001 | Bean Validation 失败 |
 | `AUTH_ERROR` | 40101 | 未登录 / token 无效 |
 | `USERNAME_EXISTS` | 40901 | 注册用户名冲突 |
 | `EMAIL_EXISTS` | 40902 | 邮箱已注册 |
+| `USER_CONFLICT` | 40903 | 用户相关冲突 |
 | `WEATHER_ERROR` | 50001 | 天气数据异常（Weather / Prediction 模块复用） |
 | `GENERIC_ERROR` | 50000 | 未捕获异常 |
+
+> 当前 `ApiCodes` 尚未定义 `STATION_NOT_FOUND = 1`。如果后续 Station / Prediction 端点需要复刻 Flask `code:1`，应先补常量再在业务代码中引用，避免裸写魔法数字。
 
 ---
 
@@ -311,7 +315,7 @@ public interface StationMapper {
 | Service | `service` + `*Service` | `UserService` | 接口可选 `*Service` + `*ServiceImpl`（团队统一即可） |
 | 类型转换 | `mapper` + `*Mapper` | `StationMapper` | MapStruct Mapper，Entity ↔ DTO/VO，无业务副作用 |
 | Repository | `repository` + `*Repository` | `StationRepository` | `extends JpaRepository<Entity, IdType>` |
-| 实体 | `model` + 名词 | `Station`, `ChatSession` | 表名 `@Table(name = "...")` 与现有 MySQL 一致 |
+| 实体 | `model` + 名词 | `Station`, `ChatSession` | 表名 `@Table(name = "...")` 与 PostgreSQL / Flyway schema 一致 |
 | 请求 DTO | `dto.request` + `*DTO` / `*RequestDTO` | `LoginRequestDTO` | 仅入参；加 `@Valid` |
 | 响应 VO | `dto.response` + `*VO` | `StationVO` | 仅出参；不放 JPA 注解 |
 | 配置类 | `config` + `*Config` | `ChatServiceConfig` | `@Configuration` Bean 定义 |
@@ -368,7 +372,7 @@ dev.kaiwen.bikes
 | 文档 | 关联内容 |
 |---|---|
 | `00-overview.md` | 迁移范围、技术栈映射、Sprint 路线图 |
-| `02-data-model.md` | `model/` 实体字段与 MySQL 表映射 |
+| `02-data-model.md` | `model/` 实体字段与 PostgreSQL 表映射 |
 | `03-configuration-and-dependencies.md` | 完整 `application.yaml` 建议、Maven 依赖清单 |
 | `04-modules.md` | 各 Controller 端点与 Service 职责 |
 | `05-testing-and-roadmap.md` | MockMvc 契约测试、覆盖率目标 |
