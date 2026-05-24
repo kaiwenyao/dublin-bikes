@@ -23,6 +23,9 @@ spring:
     property-naming-strategy: SNAKE_CASE
     default-property-inclusion: ALWAYS
 
+  mail:
+    host: ""
+
   thymeleaf:
     check-template-location: false
 
@@ -33,14 +36,17 @@ app:
     read-timeout-ms: 5000
     stream-timeout-ms: 10000
     title-timeout-ms: 3000
+
   jwt:
     access-secret: test-access-secret-key-at-least-32-bytes!!
     refresh-secret: test-refresh-secret-key-at-least-32-bytes!!
     access-expires-seconds: 900
     refresh-expires-seconds: 604800
+
   verification:
     code-expire-seconds: 300
     resend-cooldown-seconds: 60
+
   mail:
     from: test@example.com
     from-name: Dublin Bikes Test
