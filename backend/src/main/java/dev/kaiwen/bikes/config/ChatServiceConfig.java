@@ -9,10 +9,10 @@ import org.springframework.web.client.RestClient;
 @EnableConfigurationProperties(ChatServiceProperties.class)
 public class ChatServiceConfig {
 
-    @Bean
-    RestClient chatServiceRestClient(ChatServiceProperties properties) {
-        return RestClient.builder()
-                .baseUrl(properties.baseUrl())
-                .build();
-    }
+  @Bean
+  RestClient chatServiceRestClient(ChatServiceProperties properties) {
+    return RestClient.builder()
+        .baseUrl(properties.baseUrl())
+        .build();
+  }
 }

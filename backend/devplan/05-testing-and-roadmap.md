@@ -36,12 +36,13 @@
 - 用 `MockMvc` + `jsonPath("$.code").value(0)` 等。
 
 **JPA Repository**
-- `@DataJpaTest`（使用 Testcontainers MySQL，不要用 H2 —— group-by + JSON 列在 H2 行为不同）。
+- 当前测试 profile 使用 H2 PostgreSQL mode、`ddl-auto=create-drop`、`flyway.enabled=false`，适合轻量 Repository smoke test。
+- 对 `findLatestPerStation()`、Flyway DDL、`message_store.message JSONB` 等 PostgreSQL 特性，后续应追加 Testcontainers PostgreSQL 集成测试。
 - 验证 `findLatestPerStation()` 正确返回每站点最新一行。
 - `WeatherRepository.findTop6...` 边界（恰好 5 / 6 / 7 行）。
 
 **Integration**
-- 启动完整 `@SpringBootTest`，Testcontainers MySQL + Flyway baseline。
+- 启动完整 `@SpringBootTest`，优先用 Testcontainers PostgreSQL + Flyway baseline 覆盖真实 DDL；轻量场景可继续使用当前 H2 test profile。
 - 用 `TestRestTemplate` 走全链路：register → send-code → activate → login → me。
 - chat 模块：`WireMock` 模拟 Python `chat-service` 的 `/chat/stream`，断言 Spring SSE 透传分块输出和 `[DONE]` 收尾。
 
@@ -61,30 +62,30 @@
 
 ## B. Sprint 路线图
 
-### Sprint S1 — 工程骨架（2 天）
+### Sprint S1 — 工程骨架（已基本落地）
 
 **目标**：能跑起来，连得上 DB，`/actuator/health` 200。
 
 任务：
-1. （手动）追加 `03-configuration-and-dependencies.md` §2 中数据访问、validation、actuator、MapStruct 依赖到 `pom.xml`。
-2. 合并 `application.yaml` 配置。
-3. 实现 `dev.kaiwen.bikes.config` 下全部 `@ConfigurationProperties` 类（与 `01-architecture.md` §3 / §10 一致，不建 `properties/` 子包）。
-4. `dto/ApiResponse`、`exception/GlobalExceptionHandler`。
-5. Flyway baseline `V1__baseline.sql`（空）。
-6. `JpaConfig` + `EntityScan` + 主类 annotations。
-7. CI：`mvn verify` + jacoco 报告。
+1. 已追加数据访问、validation、Flyway、MapStruct 依赖；Actuator 尚未加入。
+2. 已配置 `application.yaml`、`application-dev.yaml`、`application-prod.yaml`、test profile。
+3. 已实现 `ChatServiceProperties`；JWT / Mail / Google Maps / Prediction 的 properties 尚未实现。
+4. 已实现 `dto/ApiResponse`、`ApiCodes`、`exception/GlobalExceptionHandler`。
+5. 已实现完整 PostgreSQL `V1__baseline.sql`，不是空 baseline。
+6. 已在主类添加 `@ConfigurationPropertiesScan`、`@EntityScan`、`@EnableJpaRepositories`。
+7. CI / Jacoco 尚未落地。
 
-**验收**：`./mvnw spring-boot:run` 启动成功；`curl localhost:5000/actuator/health` 返回 `{"status":"UP"}`。
+**验收**：当前目标是 `mvn test` 通过。`/actuator/health` 需要先加入 Actuator 依赖后才能作为验收项。
 
 ---
 
 ### Sprint S2 — Station + Weather（3 天）
 
 任务：
-1. `Station`、`Availability`、`WeatherForecast` Entity。
-2. 对应 Repository（含 native query for "latest per station"）。
-3. Service / Controller / DTO + MapStruct Mapper（StationVO / AvailabilityVO / WeatherDataVO）。
-4. WebMvc + Repository 测试覆盖率 ≥ 85%。
+1. `Station`、`Availability`、`WeatherForecast` Entity（已完成）。
+2. 对应 Repository（含 native query for "latest per station"）（已完成）。
+3. DTO 已完成；`StationMapper` 已覆盖 `StationVO` / `AvailabilityVO`。Weather 仅 VO 已完成，`WeatherMapper`、Service、Controller 尚未完成。
+4. Service / Controller / WebMvc 测试待补。
 
 **验收**：四个 GET 端点（不含 prediction）能用现有 Postman 用例打通，响应字段顺序、命名一致。
 
@@ -113,7 +114,7 @@
 3. WebMvc + Mock 测试 ≥ 80% 覆盖。
 4. 校验 DTO 二选一（`start_address/end_address` XOR `start/end`）。
 
-**验收**：地址型和坐标型请求各 1 个 Postman 用例对比 Flask 输出，最优路线一致；响应 `data` 必须包含前端需要的 `route_info` 与 `search_context`，其中站点对象包含 `coords`、`walking_time` 和 availability 字段。
+**验收**：地址型和坐标型请求各 1 个 Postman 用例对比 Flask 输出，最优路线一致。注意当前 `JourneyResponseDTO` 仍是扁平结构，若前端需要 `route_info` 与 `search_context`，实现 Service/Controller 前需先调整 DTO。
 
 ---
 
@@ -130,7 +131,7 @@
 6. 标题自动生成：`@Async` 调用 `chat-service /chat/title`，异常吞掉。
 7. 会话列表 + 历史接口（行级 ACL：`userId == 当前用户`，命中后再代理到 chat-service 取历史）。
 
-**验收**：完整 SSE 流式对话端到端跑通；`docker-compose up` 同时拉起 Spring + chat-service + MySQL；session ACL 测试覆盖（A 用户无法读到 B 用户的 session）。
+**验收**：完整 SSE 流式对话端到端跑通；`docker-compose up` 同时拉起 Spring + chat-service + PostgreSQL；session ACL 测试覆盖（A 用户无法读到 B 用户的 session）。
 
 ---
 
@@ -141,7 +142,7 @@
 2. `PredictionClient` + `PredictionService`。
 3. `/api/stations/{n}/prediction` 端到端联调。
 4. Newman 跑全量 Postman 集合对比 Flask 输出。
-5. 完善 Dockerfile（Spring Boot 分层 + JRE）+ `docker-compose.yml`（app + mysql + chat-service + prediction，沿用 S5 已加入的 chat-service 服务）。
+5. 完善 Dockerfile（Spring Boot 分层 + JRE）+ `docker-compose.yml`（app + PostgreSQL + chat-service + prediction，沿用 S5 已加入的 chat-service 服务）。
 6. README：开发、测试、部署、回退步骤。
 
 **验收**：`docker-compose up` 一键启动；Postman 全集合 100% pass；覆盖率 ≥ 80%。
@@ -154,7 +155,7 @@
 |---|---|---|---|
 | R1 | LangChain Python `SQLChatMessageHistory` JSON 结构演进 | 升级 LangChain 后历史读不出 | 锁定 `langchain-community` 版本；chat-service 升级前跑 `/sessions/{id}/messages` 回归测试 |
 | R2 | sklearn 模型 ONNX 化失败 | 无法走方案 B 单 JVM 部署 | 默认走方案 A（Python 微服务） |
-| R3 | MySQL `JSON` 列在 H2 行为差异 | 单元测试假阳/假阴 | 仅用 Testcontainers MySQL，不用 H2 |
+| R3 | PostgreSQL `JSONB` / native SQL 与 H2 行为差异 | 单元测试假阳/假阴 | 轻量测试用 H2，DDL/native query 回归用 Testcontainers PostgreSQL |
 | R4 | 旧 JWT logout 失效要求"立刻" | 短期内大量旧 token 涌入数据库压力 | 每次校验 `verifyAccessToken` 都 reload user → 加 user 缓存（Caffeine, TTL=30s） |
 | R5 | Google Maps quota 用尽 | journey 端点失败 | Resilience4j circuit breaker + fallback 返回 `code:500` 友好提示 |
 | R6 | Flask snake_case 字段 vs Spring 默认 camelCase | 前端直接挂掉 | 全局 Jackson `SNAKE_CASE`；DTO 用 camelCase 字段名（Java 习惯），序列化自动转换 |

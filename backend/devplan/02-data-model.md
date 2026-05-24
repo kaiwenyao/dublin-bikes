@@ -1,10 +1,10 @@
 # 02 — 数据模型（JPA 实体映射）
 
-> 字段名、表名、类型、是否可空、索引、外键 **必须与 Flask 现有 schema 完全一致** —— 因为生产数据库由 Alembic 管理，Spring Boot 端 **只读 schema、不变更 schema**（首版 Flyway 只做 baseline，不写 DDL）。
+> 当前后端目标库为 **PostgreSQL**，schema 由 Spring Boot 端 Flyway 管理。实体字段、表名、类型、是否可空、索引、外键必须与 `src/main/resources/db/migration/V1__baseline.sql` 保持一致；Hibernate 只做 `ddl-auto=validate` 校验，不自动改 schema。
 
 > JPA 实体包：`dev.kaiwen.bikes.model`（勿与 `dto` 混用）。
 >
-> 来源：`flask-app/app/models/{station,availability,user,weather,session,chat_history}.py`
+> 初始设计来源：`flask-app/app/models/{station,availability,user,weather,session,chat_history}.py`；当前事实来源：`backend/src/main/java/dev/kaiwen/bikes/model/*` 与 `backend/src/main/resources/db/migration/V1__baseline.sql`。
 
 ---
 
@@ -239,14 +239,14 @@ public class ChatSession {
 > **归属变更**：本表由 **独立 Python `chat-service`** 通过 LangChain `SQLChatMessageHistory` 读写，**Spring 端不映射为 JPA 实体**。Java 侧获取历史一律走 `chat-service` HTTP 接口（见 `04-modules.md` §5）。
 >
 > 此处仍记录 schema，因为：
-> 1. Spring 与 Python 共享同一个 MySQL 实例和库；Flyway baseline 需识别此表。
+> 1. Spring 与 Python 共享同一个 PostgreSQL 实例和库；Flyway baseline 需创建此表。
 > 2. 排障 / 数据修复时可能需要直接读 SQL。
 
 | 列 | 类型 | 约束 |
 |---|---|---|
 | `id` | `INT` | PK AUTO_INCREMENT |
-| `session_id` | `TEXT` | （Python 端 `db.Text`；MySQL 物理列为 `TEXT`） |
-| `message` | `JSON` | LangChain `BaseMessage` 序列化结构 |
+| `session_id` | `TEXT` | Python 端 `db.Text`，PostgreSQL 物理列为 `TEXT` |
+| `message` | `JSONB` | LangChain `BaseMessage` 序列化结构 |
 
 **`message` JSON 结构**（LangChain 1.x，由 Python 端写入）：
 ```json
@@ -261,7 +261,7 @@ public class ChatSession {
 ```
 角色枚举：`human` ↔ `user`、`ai` ↔ `assistant`、`system`、`tool`。
 
-> Spring 端无需实现 `ChatMemoryStore`、无需写 `ChatMessage` JPA 实体；如调试需要可在 `db/migration` 之外提供只读 native query，不纳入主代码路径。
+> Spring 端无需实现 `ChatMemoryStore`、无需写 `ChatMessage` JPA 实体；如调试需要可在 `db/migration` 之外提供只读 native query，不纳入主代码路径。PostgreSQL DDL 中该列为 `JSONB`，不是 MySQL `JSON`。
 
 ---
 
