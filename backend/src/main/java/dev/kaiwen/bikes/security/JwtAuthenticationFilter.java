@@ -3,7 +3,6 @@ package dev.kaiwen.bikes.security;
 import dev.kaiwen.bikes.exception.AuthException;
 import dev.kaiwen.bikes.model.User;
 import dev.kaiwen.bikes.repository.UserRepository;
-import dev.kaiwen.bikes.security.JwtTokenClaims;
 import dev.kaiwen.bikes.service.JwtService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -34,16 +33,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if (token != null) {
             try {
                 JwtTokenClaims claims = jwtService.parseAccessToken(token);
-                User user =
-                        userRepository
-                                .findById(claims.userId())
-                                .orElseThrow(() -> new AuthException("invalid token"));
-                if (!user.getTokenVersion().equals(claims.tokenVersion())) {
-                    throw new AuthException("invalid token");
-                }
-                if (!Boolean.TRUE.equals(user.getIsActive())) {
-                    throw new AuthException("invalid token");
-                }
+                User user = loadActiveUser(claims);
                 var authentication =
                         new UsernamePasswordAuthenticationToken(
                                 new AuthenticatedUser(user.getId()),
@@ -57,12 +47,25 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
+    private User loadActiveUser(JwtTokenClaims claims) {
+        User user =
+                userRepository
+                        .findById(claims.userId())
+                        .orElseThrow(() -> new AuthException("invalid token"));
+        if (!user.getTokenVersion().equals(claims.tokenVersion())) {
+            throw new AuthException("invalid token");
+        }
+        if (!Boolean.TRUE.equals(user.getIsActive())) {
+            throw new AuthException("invalid token");
+        }
+        return user;
+    }
+
     private String resolveToken(HttpServletRequest request) {
         String auth = request.getHeader(HttpHeaders.AUTHORIZATION);
         if (auth != null && auth.startsWith("Bearer ")) {
             return auth.substring(7).trim();
         }
-        String legacy = request.getHeader("token");
-        return (legacy != null && !legacy.isBlank()) ? legacy.trim() : null;
+        return null;
     }
 }
