@@ -20,7 +20,7 @@ FROM nginx:1.25-alpine
 
 RUN apk add --no-cache gettext
 
-ENV BACKEND_HOST=flask-app
+ENV BACKEND_HOST=dublin-bikes-backend
 ENV BACKEND_PORT=5000
 
 # Copy build output to nginx directory
