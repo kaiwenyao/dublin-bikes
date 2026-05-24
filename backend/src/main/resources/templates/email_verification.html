@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Verify your email</title>
+</head>
+<body>
+  <p>Your Dublin Bikes verification code is:</p>
+  <p style="font-size: 24px; font-weight: bold;" th:text="${code}">123456</p>
+  <p>This code expires in <span th:text="${expiresMinutes}">5</span> minutes.</p>
+  <div th:if="${activationLinkSection != null}" th:utext="${activationLinkSection}"></div>
+</body>
+</html>
