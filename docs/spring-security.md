@@ -685,7 +685,7 @@ objectMapper.writeValue(
 ```json
 {
   "code": 40101,
-  "message": "unauthorized",
+  "msg": "unauthorized",
   "data": null
 }
 ```
