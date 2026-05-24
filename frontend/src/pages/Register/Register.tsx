@@ -34,7 +34,9 @@ export default function Register() {
     setLoading(true)
     try {
       await userRegisterAPI({ username, email, password })
-      setIdentifier(email.trim().toLowerCase())
+      const normalizedEmail = email.trim().toLowerCase()
+      await sendVerificationCodeAPI(normalizedEmail)
+      setIdentifier(normalizedEmail)
       setStep('verify')
       toast.success('Registration successful. Check your email for the verification code.')
     } catch (err) {

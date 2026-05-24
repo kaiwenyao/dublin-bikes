@@ -7,6 +7,7 @@ import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Async;
@@ -21,7 +22,7 @@ public class MailService {
 
     private static final String SUBJECT = "[Dublin Bikes] Verify your email to start riding";
 
-    private final JavaMailSender mailSender;
+    private final ObjectProvider<JavaMailSender> mailSenderProvider;
     private final TemplateEngine templateEngine;
     private final MailProperties mailProperties;
 
@@ -36,6 +37,11 @@ public class MailService {
         }
         if (mailProperties.from() == null || mailProperties.from().isBlank()) {
             log.info("mail not configured, skip");
+            return;
+        }
+        JavaMailSender mailSender = mailSenderProvider.getIfAvailable();
+        if (mailSender == null) {
+            log.info("mail sender not configured, skip");
             return;
         }
         try {
