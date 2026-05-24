@@ -44,9 +44,11 @@ public class Availability {
     @Column(name = "last_update", nullable = false)
     private Long lastUpdate;
 
+    /** Naive UTC wall time (scraper utc_now_naive / JCDecaux from_unix_ms_utc). */
     @Column(nullable = false)
     private LocalDateTime timestamp;
 
+    /** Naive UTC scrape time. */
     @Column(name = "requested_at", nullable = false)
     private LocalDateTime requestedAt;
 }
