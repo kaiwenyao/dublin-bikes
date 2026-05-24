@@ -33,6 +33,7 @@ Authorization 的意思是“授权”，回答的问题是：
 - `/actuator/health` 公开。
 - `GET /api/stations/**` 公开。
 - `GET /api/weather` 公开。
+- `POST /api/journey/**` 公开（路线规划接口，目前在 `SecurityConfig` 中预留）。
 - 部分用户注册、登录、激活、刷新 token 接口公开。
 - `GET /api/users/me` 必须登录。
 - `POST /api/users/logout` 必须登录。
@@ -426,7 +427,7 @@ private final JwtService jwtService;
 private final UserRepository userRepository;
 ```
 
-解析 token 只能得到 userId 和 tokenVersion。还需要查数据库确认用户仍然存在、仍然激活、tokenVersion 仍然匹配。
+解析 token 只能得到 `JwtTokenClaims(userId, tokenVersion, type)` 这三个字段（其中 `type` 已在 `JwtService` 内部校验为 `access`）。还需要查数据库确认用户仍然存在、仍然激活、`tokenVersion` 仍然匹配。
 
 ```java
 String token = resolveToken(request);
