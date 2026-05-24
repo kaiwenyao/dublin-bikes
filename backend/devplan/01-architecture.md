@@ -132,6 +132,32 @@ public class DublinBikesApplication { ... }
 
 **不在 JVM 引入** LangChain4j、Spring AI 或任何 Java LLM SDK。`ALIYUN_API_KEY` 等凭证仅存在于 Python 工程 `.env`。
 
+### 4.1 前端为什么不直连 Python `chat-service`
+
+请求路径明确为 **前端 → Spring Boot → Python `chat-service`**（BFF 模式），而不是前端直接打 Python。理由：
+
+| 维度 | 走 Spring Boot 代理 | 前端直连 Python |
+|---|---|---|
+| **鉴权 / 用户身份** | 复用 `JwtAuthenticationFilter` 校验 access token、`tokenVersion`、`isActive`，Python 端拿到的 `user_id` 必然可信 | Python 需要重新实现一套与 Spring 等价的 JWT 校验，否则 `user_id` 可被客户端伪造 |
+| **会话 ACL** | `_ensureSession` 在 Spring 端读写 `sessions` 表（`user_id` 来自 SecurityContext），天然防越权 | Python 既要校验 token 又要查 `sessions`，与 Spring 形成双份业务逻辑 |
+| **业务上下文注入** | Spring 在转发前可以从 `users` / `stations` / `journey` 表组装上下文（用户偏好、收藏站点等）拼入 prompt，Python 端保持"纯 LLM 编排"职责 | 业务数据要么暴露给前端再回传，要么 Python 反向调 Spring，增加耦合 |
+| **网络暴露面** | Python 只对内网开放（docker-compose 内部网络），减少攻击面，不必配 CORS / CSP | Python 必须暴露公网，需要独立维护 CORS、限流、WAF |
+| **统一响应契约** | Spring 用 `ApiResponse` + `ApiCodes` 包裹，前端错误处理路径不分叉 | Python 返回结构与 Spring 不一致，前端要写两套异常处理 |
+| **密钥隔离** | `ALIYUN_API_KEY` 仅存在于 Python `.env`，前端连 Python 的 base URL 都不需要知道 | Python 端的限流/计费策略全暴露给客户端，配额管理更难 |
+
+### 4.2 流式响应（SSE）的 tradeoff
+
+代理模式唯一显著的代价是 **SSE 多一跳延迟**：Python 产出 `data: {"content":"..."}\n\n` 后，Spring 必须用 `WebClient.bodyToFlux(String)` + `ResponseBodyEmitter`（或 `SseEmitter`）**逐 token 透传**，不能缓冲整段响应再下发。
+
+要点：
+
+- 用 `WebClient`（reactive）而非 `RestClient`（阻塞）做流式上游调用 —— 详见 §5.4 `ChatServiceClient.chatStream`。
+- Controller 必须设置 `X-Accel-Buffering: no`、`Cache-Control: no-cache`、`Connection: keep-alive`，否则 Nginx / 反向代理会缓冲整段事件流，"打字机效果"失效。
+- Tomcat 默认线程模型即可承载，**不需要**为这一条端点切换到 WebFlux 全栈。
+- 端到端延迟通常增加 5–20 ms，相对 LLM 首 token 延迟（数百 ms 起）几乎可忽略。
+
+> 例外：如果未来出现完全无用户身份、无业务数据依赖的纯演示页面，可以单独暴露一个 Python 端点供该场景直连，但当前项目所有对话都绑定登录用户，**不存在直连 Python 的合法场景**。
+
 ```java
 @Configuration
 @EnableConfigurationProperties(ChatServiceProperties.class)
