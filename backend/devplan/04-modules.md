@@ -318,16 +318,14 @@ public record RefreshTokenRequestDTO(
 
 **请求头读取顺序（兼容前端遗留实现）**：
 
-前端 `request.ts` 与 `chat.ts` 在每次受保护请求上同时写入两个头：
+前端 `request.ts` 与 `chat.ts` 在每次受保护请求上写入标准 Bearer 头：
 ```
 Authorization: Bearer <access_token>
-token: <access_token>
 ```
 
 Spring `JwtAuthenticationFilter` 必须按以下顺序解析：
 1. 先读 `Authorization` 头，若以 `Bearer ` 前缀开头则取后段。
-2. 缺失或不合法时回退读 `token` 头（裸 token，不含 `Bearer ` 前缀）。
-3. 两者都没有 → 跳过本过滤器（让 Security 链按公开/受保护路由策略判定 401）。
+2. 没有标准 Bearer 头 → 跳过本过滤器（让 Security 链按公开/受保护路由策略判定 401）。
 
 ```java
 private String resolveToken(HttpServletRequest req) {
@@ -335,12 +333,9 @@ private String resolveToken(HttpServletRequest req) {
     if (auth != null && auth.startsWith("Bearer ")) {
         return auth.substring(7).trim();
     }
-    String legacy = req.getHeader("token");
-    return (legacy != null && !legacy.isBlank()) ? legacy.trim() : null;
+    return null;
 }
 ```
-
-> `token` 头属于兼容补丁，**新代码不要写**；待前端清理后移除该回退分支。
 
 ### 4.4 登录 / 刷新响应合同
 
