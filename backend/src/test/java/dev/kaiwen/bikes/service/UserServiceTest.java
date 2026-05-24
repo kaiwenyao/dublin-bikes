@@ -81,18 +81,31 @@ class UserServiceTest {
     }
 
     @Test
-    void sendVerificationCode_throttlesWithinCooldown() {
+    void sendVerificationCode_unknownIdentifierReturnsGenericSuccess() {
+        when(userRepository.findByEmail("missing@example.com")).thenReturn(Optional.empty());
+
+        assertThat(
+                        userService.sendVerificationCode(
+                                new SendVerificationCodeRequestDTO("missing@example.com"))
+                        .message())
+                .isEqualTo("verification code sent");
+        verify(userRepository, never()).save(any(User.class));
+        verify(mailService, never()).sendVerificationEmail(any(), any(), any(int.class), any());
+    }
+
+    @Test
+    void sendVerificationCode_throttleSilentlyNoOpsWithinCooldown() {
         User user = inactiveUser();
         user.setEmailVerificationCodeSentAt(LocalDateTime.now(ZoneOffset.UTC));
         when(userRepository.findByEmail("alice@example.com")).thenReturn(Optional.of(user));
 
-        assertThatThrownBy(
-                        () ->
-                                userService.sendVerificationCode(
-                                        new SendVerificationCodeRequestDTO("alice@example.com")))
-                .isInstanceOf(AuthException.class)
-                .hasMessage("verification code can only be requested once per minute");
+        assertThat(
+                        userService.sendVerificationCode(
+                                new SendVerificationCodeRequestDTO("alice@example.com"))
+                        .message())
+                .isEqualTo("verification code sent");
         verify(userRepository, never()).save(any(User.class));
+        verify(mailService, never()).sendVerificationEmail(any(), any(), any(int.class), any());
     }
 
     @Test

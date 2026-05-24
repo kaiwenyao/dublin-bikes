@@ -18,6 +18,8 @@ import dev.kaiwen.bikes.model.User;
 import dev.kaiwen.bikes.repository.UserRepository;
 import dev.kaiwen.bikes.security.AuthenticatedUser;
 import dev.kaiwen.bikes.security.JwtTokenClaims;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -38,8 +40,6 @@ public class UserService {
     private static final Pattern EMAIL_PATTERN =
             Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
     private static final String AUTH_FAILED = "invalid credentials";
-    private static final String RESEND_THROTTLE =
-            "verification code can only be requested once per minute";
 
     private final UserRepository userRepository;
     private final UserMapper userMapper;
@@ -70,16 +70,18 @@ public class UserService {
 
     @Transactional
     public SendVerificationCodeMessageVO sendVerificationCode(SendVerificationCodeRequestDTO request) {
-        User user =
-                findByIdentifier(request.identifier())
-                        .orElseThrow(() -> new AuthException(AUTH_FAILED));
+        Optional<User> userOpt = findByIdentifier(request.identifier());
+        if (userOpt.isEmpty()) {
+            return SendVerificationCodeMessageVO.defaults();
+        }
+        User user = userOpt.get();
         LocalDateTime now = utcNow();
         if (user.getEmailVerificationCodeSentAt() != null) {
             LocalDateTime allowed =
                     user.getEmailVerificationCodeSentAt()
                             .plusSeconds(verificationProperties.resendCooldownSeconds());
             if (now.isBefore(allowed)) {
-                throw new AuthException(RESEND_THROTTLE);
+                return SendVerificationCodeMessageVO.defaults();
             }
         }
         String code = generateVerificationCode();
@@ -177,8 +179,7 @@ public class UserService {
     }
 
     private void validateVerificationCode(User user, String code) {
-        if (user.getEmailVerificationCode() == null
-                || !user.getEmailVerificationCode().equals(code)) {
+        if (!verificationCodesMatch(user.getEmailVerificationCode(), code)) {
             throw new AuthException(AUTH_FAILED);
         }
         if (user.getEmailVerificationCodeExpiresAt() == null
@@ -210,6 +211,14 @@ public class UserService {
             return token.substring(0, 64);
         }
         return token;
+    }
+
+    private static boolean verificationCodesMatch(String stored, String provided) {
+        if (stored == null || provided == null) {
+            return false;
+        }
+        return MessageDigest.isEqual(
+                stored.getBytes(StandardCharsets.UTF_8), provided.getBytes(StandardCharsets.UTF_8));
     }
 
     private static LocalDateTime utcNow() {
