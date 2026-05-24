@@ -44,7 +44,6 @@ spec:
     }
 
     parameters {
-        string(name: 'IMAGE_NAME', defaultValue: 'kaiwenyao/dublin-bikes-frontend', description: 'Docker image name')
         string(name: 'IMAGE_TAG', defaultValue: '', description: 'Image tag override (empty means branch-gitHash-jBUILD_NUMBER, e.g. main-abc1234-j88)')
         booleanParam(name: 'PUSH_IMAGE', defaultValue: true, description: 'Push image to registry')
         booleanParam(name: 'DEPLOY_TO_SERVER', defaultValue: true, description: 'Deploy container to remote server')
@@ -61,6 +60,7 @@ spec:
         DOCKER_CREDENTIALS_ID = 'docker-hub-credentials'
         SERVER_HOST_CREDENTIALS_ID = 'hel-host'
         ENV_FILE_CREDENTIALS_ID = 'dublin-bikes-frontend.env'
+        IMAGE_REPOSITORY = 'kaiwenyao/dublin-bikes-frontend'
     }
 
     stages {
@@ -107,7 +107,7 @@ spec:
                                 def gitHash = (env.GIT_COMMIT ?: '0000000').take(7)
                                 def defaultTag = "${branch}-${gitHash}-j${env.BUILD_NUMBER}"
                                 def finalTag = params.IMAGE_TAG?.trim() ? params.IMAGE_TAG.trim() : defaultTag
-                                env.FULL_IMAGE = "${params.IMAGE_NAME}:${finalTag}"
+                                env.FULL_IMAGE = "${env.IMAGE_REPOSITORY}:${finalTag}"
                             }
 
                             withCredentials([
