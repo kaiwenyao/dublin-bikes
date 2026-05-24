@@ -8,7 +8,7 @@ Postman workspace **Dublin Bikes** contains:
 
 ## Quick start
 
-1. Start backend: `cd backend && mvn spring-boot:run` (port **8080**)
+1. Start backend: `cd backend && mvn spring-boot:run` (port **5000**)
 2. In Postman, select workspace **Dublin Bikes** and environment **Dublin Bikes - Local**
 3. Run public endpoints (Stations, Weather) or auth flow:
    - `Users → Session → Login` (saves tokens)

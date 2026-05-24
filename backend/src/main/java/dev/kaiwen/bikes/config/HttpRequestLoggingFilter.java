@@ -31,18 +31,9 @@ public class HttpRequestLoggingFilter extends OncePerRequestFilter {
             log.info(
                     "{} {} -> {} ({} ms)",
                     request.getMethod(),
-                    requestPath(request),
+                    request.getRequestURI(),
                     response.getStatus(),
                     elapsedMs);
         }
-    }
-
-    private static String requestPath(HttpServletRequest request) {
-        String path = request.getRequestURI();
-        String query = request.getQueryString();
-        if (query == null || query.isBlank()) {
-            return path;
-        }
-        return path + "?" + query;
     }
 }
