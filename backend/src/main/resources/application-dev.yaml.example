@@ -11,6 +11,16 @@ spring:
       minimum-idle: 2
       connection-timeout: 5000
 
+  mail:
+    host: ${MAIL_SERVER:}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.starttls.enable: ${MAIL_USE_TLS:true}
+      mail.smtp.ssl.enable: ${MAIL_USE_SSL:false}
+
   jpa:
     properties:
       hibernate:
@@ -23,15 +33,18 @@ app:
     read-timeout-ms: 30000
     stream-timeout-ms: 120000
     title-timeout-ms: 8000
+
   jwt:
     access-secret: ${JWT_SECRET_KEY:change-me-access-secret-32chars-min}
     refresh-secret: ${JWT_REFRESH_SECRET_KEY:change-me-refresh-secret-32chars-min}
-    access-expires-seconds: 900
-    refresh-expires-seconds: 604800
+    access-expires-seconds: ${JWT_ACCESS_EXPIRES_SECONDS:900}
+    refresh-expires-seconds: ${JWT_REFRESH_EXPIRES_SECONDS:604800}
+
   verification:
-    code-expire-seconds: 300
-    resend-cooldown-seconds: 60
+    code-expire-seconds: ${VERIFICATION_CODE_EXPIRE_SECONDS:300}
+    resend-cooldown-seconds: ${VERIFICATION_CODE_RESEND_COOLDOWN_SECONDS:60}
+
   mail:
     from: ${MAIL_FROM:}
-    from-name: Dublin Bikes
-    frontend-base-url: http://localhost:5173
+    from-name: ${MAIL_DEFAULT_FROM_NAME:Dublin Bikes}
+    frontend-base-url: ${FRONTEND_BASE_URL:http://localhost:5173}
