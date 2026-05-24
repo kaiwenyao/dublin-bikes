@@ -14,7 +14,7 @@ spring:
       ddl-auto: create-drop
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
+        dialect: org.hibernate.dialect.H2Dialect
 
   flyway:
     enabled: false
@@ -23,6 +23,9 @@ spring:
     property-naming-strategy: SNAKE_CASE
     default-property-inclusion: ALWAYS
 
+  thymeleaf:
+    check-template-location: false
+
 app:
   chat-service:
     base-url: http://localhost:8002
@@ -30,3 +33,15 @@ app:
     read-timeout-ms: 5000
     stream-timeout-ms: 10000
     title-timeout-ms: 3000
+  jwt:
+    access-secret: test-access-secret-key-at-least-32-bytes!!
+    refresh-secret: test-refresh-secret-key-at-least-32-bytes!!
+    access-expires-seconds: 900
+    refresh-expires-seconds: 604800
+  verification:
+    code-expire-seconds: 300
+    resend-cooldown-seconds: 60
+  mail:
+    from: test@example.com
+    from-name: Dublin Bikes Test
+    frontend-base-url: http://localhost:5173
