@@ -40,6 +40,7 @@ public class UserService {
     private static final Pattern EMAIL_PATTERN =
             Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
     private static final String AUTH_FAILED = "invalid credentials";
+    private static final String EMAIL_NOT_VERIFIED_MSG = "email not verified";
 
     private final UserRepository userRepository;
     private final UserMapper userMapper;
@@ -126,7 +127,7 @@ public class UserService {
             throw new AuthException(AUTH_FAILED);
         }
         if (!Boolean.TRUE.equals(user.getIsActive())) {
-            throw new AuthException(AUTH_FAILED);
+            throw new BusinessException(ApiCodes.EMAIL_NOT_VERIFIED, EMAIL_NOT_VERIFIED_MSG, 403);
         }
         return jwtService.createTokenPair(user);
     }

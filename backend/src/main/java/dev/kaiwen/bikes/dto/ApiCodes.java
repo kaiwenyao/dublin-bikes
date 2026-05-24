@@ -6,6 +6,7 @@ public final class ApiCodes {
     public static final int STATION_NOT_FOUND = 1;
     public static final int VALIDATION_ERROR = 40001;
     public static final int AUTH_ERROR = 40101;
+    public static final int EMAIL_NOT_VERIFIED = 40301;
     public static final int USERNAME_EXISTS = 40901;
     public static final int EMAIL_EXISTS = 40902;
     public static final int USER_CONFLICT = 40903;
