@@ -23,6 +23,7 @@ public class WeatherService {
     private final WeatherMapper weatherMapper;
 
     public WeatherDataVO getWeather() {
+        // weather_forecast.forecast_time is naive UTC (scraper: from_unix_s_utc / current_hour_utc)
         LocalDateTime nowHour =
                 LocalDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.HOURS);
         List<WeatherForecast> rows =

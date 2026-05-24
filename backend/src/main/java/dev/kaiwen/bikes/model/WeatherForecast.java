@@ -22,6 +22,7 @@ public class WeatherForecast {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer id;
 
+    /** Naive UTC wall time; must match scraper from_unix_s_utc and service queries in UTC. */
     @Column(name = "forecast_time", nullable = false, unique = true)
     private LocalDateTime forecastTime;
 

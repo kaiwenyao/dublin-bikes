@@ -8,6 +8,7 @@ import dev.kaiwen.bikes.mapper.StationMapper;
 import dev.kaiwen.bikes.repository.AvailabilityRepository;
 import dev.kaiwen.bikes.repository.StationRepository;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -28,7 +29,8 @@ public class StationService {
 
     public List<AvailabilityVO> getRecentAvailability(int number) {
         requireStation(number);
-        LocalDateTime since = LocalDateTime.now().minusDays(1);
+        // availability.timestamp / requested_at are naive UTC (scraper/time_utils); never use JVM default zone
+        LocalDateTime since = LocalDateTime.now(ZoneOffset.UTC).minusDays(1);
         return stationMapper.toAvailabilityVOList(availabilityRepository.findRecent(number, since));
     }
 
