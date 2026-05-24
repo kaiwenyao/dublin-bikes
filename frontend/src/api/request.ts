@@ -203,17 +203,11 @@ const notifyTokenExpired = (): void => {
   handleTokenExpired()
 }
 
-/**
- * Write both `Authorization` and `token`:
- * - `Authorization` is standard Bearer auth header;
- * - `token` is for backward compatibility with legacy backend field.
- */
 const setAuthorizationHeader = (config: InternalAxiosRequestConfig, token: string): void => {
   if (!config.headers) {
     config.headers = {} as InternalAxiosRequestConfig['headers']
   }
   config.headers.Authorization = `Bearer ${token}`
-  config.headers.token = token
 }
 
 // ============ Request Interceptor ============

@@ -5,4 +5,4 @@ import org.springframework.context.annotation.Configuration;
 
 @Configuration
 @EnableConfigurationProperties({JwtProperties.class, VerificationProperties.class, MailProperties.class})
-public class SecurityPropertiesConfig {}
+public class AppPropertiesConfig {}
