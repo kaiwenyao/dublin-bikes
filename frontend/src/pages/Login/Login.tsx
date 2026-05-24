@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { userLoginAPI, setAuthTokens } from "@/api";
 import { toast } from "sonner";
 
-const UNACTIVATED_MESSAGE = "account is disabled";
+const EMAIL_NOT_VERIFIED_MESSAGE = "email not verified";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -27,10 +27,7 @@ export default function Login() {
       navigate("/profile", { replace: true });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Network error";
-      if (
-        msg.toLowerCase().includes(UNACTIVATED_MESSAGE) ||
-        msg.toLowerCase().includes("disabled")
-      ) {
+      if (msg.toLowerCase().includes(EMAIL_NOT_VERIFIED_MESSAGE)) {
         toast.info("Account needs to be activated.");
         navigate("/verify-email", {
           state: { identifier: identifier.trim() },

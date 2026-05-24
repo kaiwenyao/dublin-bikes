@@ -109,14 +109,21 @@ class UserServiceTest {
     }
 
     @Test
-    void login_rejectsInactiveUser() {
+    void login_rejectsInactiveUserWithEmailNotVerified() {
         User user = inactiveUser();
         user.setPasswordHash(passwordEncoder.encode("password12"));
         when(userRepository.findByUsername("alice")).thenReturn(Optional.of(user));
 
         assertThatThrownBy(
                         () -> userService.login(new LoginRequestDTO("alice", "password12")))
-                .isInstanceOf(AuthException.class);
+                .isInstanceOf(BusinessException.class)
+                .satisfies(
+                        ex -> {
+                            BusinessException business = (BusinessException) ex;
+                            assertThat(business.getCode()).isEqualTo(ApiCodes.EMAIL_NOT_VERIFIED);
+                            assertThat(business.getStatus()).isEqualTo(403);
+                            assertThat(business.getMessage()).isEqualTo("email not verified");
+                        });
     }
 
     @Test

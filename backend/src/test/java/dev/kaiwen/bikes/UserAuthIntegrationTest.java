@@ -101,4 +101,33 @@ class UserAuthIntegrationTest {
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(40101));
     }
+    @Test
+    void loginWithUnverifiedEmailReturnsEmailNotVerified() throws Exception {
+        String username = "pending" + System.nanoTime();
+        String email = username + "@example.com";
+        String password = "password12";
+
+        mockMvc.perform(
+                        post("/api/users/register")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(
+                                        """
+                                        {"username":"%s","email":"%s","password":"%s"}
+                                        """
+                                                .formatted(username, email, password)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(
+                        post("/api/users/login")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(
+                                        """
+                                        {"identifier":"%s","password":"%s"}
+                                        """
+                                                .formatted(username, password)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value(40301))
+                .andExpect(jsonPath("$.msg").value("email not verified"));
+    }
+
 }
