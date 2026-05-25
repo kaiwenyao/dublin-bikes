@@ -37,20 +37,37 @@ public class GoogleMapsClient {
                                                 .build())
                         .retrieve()
                         .body(JsonNode.class);
-        if (root == null || !"OK".equals(text(root, "status"))) {
-            throw mapsUnavailable();
-        }
-        JsonNode location = root.path("results").path(0).path("geometry").path("location");
-        if (location.isMissingNode()) {
-            throw mapsUnavailable();
-        }
-        return new LatLon(location.path("lat").asDouble(), location.path("lng").asDouble());
+        return parseGeocodeResponse(root);
     }
 
     @SuppressWarnings("unused")
     private LatLon geocodeFallback(String address, Throwable ex) {
-        log.warn("Google geocode failed for address", ex);
+        if (ex instanceof BusinessException businessException) {
+            throw businessException;
+        }
+        log.warn("Google geocode failed for address={}", address, ex);
         throw mapsUnavailable();
+    }
+
+    static LatLon parseGeocodeResponse(JsonNode root) {
+        if (root == null) {
+            throw new GoogleMapsTransientException("empty geocode response");
+        }
+        String status = text(root, "status");
+        if ("OK".equals(status)) {
+            JsonNode location = root.path("results").path(0).path("geometry").path("location");
+            if (location.isMissingNode()) {
+                throw addressNotResolved();
+            }
+            return new LatLon(location.path("lat").asDouble(), location.path("lng").asDouble());
+        }
+        if ("ZERO_RESULTS".equals(status)) {
+            throw addressNotResolved();
+        }
+        if ("INVALID_REQUEST".equals(status)) {
+            throw new BusinessException(ApiCodes.VALIDATION_ERROR, "invalid address", 400);
+        }
+        throw new GoogleMapsTransientException("geocode status: " + status);
     }
 
     @Retry(name = "gmaps", fallbackMethod = "distanceMatrixFallback")
@@ -112,6 +129,10 @@ public class GoogleMapsClient {
     private static String text(JsonNode node, String field) {
         JsonNode value = node.get(field);
         return value == null || value.isNull() ? null : value.asText();
+    }
+
+    private static BusinessException addressNotResolved() {
+        return new BusinessException(ApiCodes.NO_AVAILABLE_ROUTE, "no available route", 404);
     }
 
     private static BusinessException mapsUnavailable() {
