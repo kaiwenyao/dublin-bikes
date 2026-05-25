@@ -4,6 +4,11 @@ export const ACCESS_TOKEN_KEY = 'access_token'
 /** Key for storing refresh_token returned by backend after login in storage */
 export const REFRESH_TOKEN_KEY = 'refresh_token'
 
+/** Per-tab preference for which storage should back outgoing requests. */
+const ACTIVE_TOKEN_STORAGE_KEY = 'active_token_storage'
+const SESSION_STORAGE_VALUE = 'session'
+const LOCAL_STORAGE_VALUE = 'local'
+
 /** Seconds before JWT exp to treat access token as expired (clock skew). */
 const ACCESS_TOKEN_EXPIRY_SKEW_SECONDS = 30
 
@@ -37,6 +42,27 @@ const clearAuthTokensIn = (storage: Storage): void => {
   storage.removeItem(REFRESH_TOKEN_KEY)
 }
 
+const storagePreferenceValue = (storage: Storage): string | null => {
+  if (typeof window === 'undefined') return null
+  if (storage === window.sessionStorage) return SESSION_STORAGE_VALUE
+  if (storage === window.localStorage) return LOCAL_STORAGE_VALUE
+  return null
+}
+
+const setActiveStorage = (storage: Storage): void => {
+  if (typeof window === 'undefined') return
+  const value = storagePreferenceValue(storage)
+  if (value) window.sessionStorage.setItem(ACTIVE_TOKEN_STORAGE_KEY, value)
+}
+
+const getPreferredStorage = (): Storage | null => {
+  if (typeof window === 'undefined') return null
+  const value = window.sessionStorage.getItem(ACTIVE_TOKEN_STORAGE_KEY)
+  if (value === SESSION_STORAGE_VALUE) return window.sessionStorage
+  if (value === LOCAL_STORAGE_VALUE) return window.localStorage
+  return null
+}
+
 const decodeJwtPayload = (token: string): Record<string, unknown> | null => {
   const parts = token.split('.')
   if (parts.length < 2) return null
@@ -52,7 +78,7 @@ const decodeJwtPayload = (token: string): Record<string, unknown> | null => {
 const isAccessTokenExpired = (accessToken: string): boolean => {
   const payload = decodeJwtPayload(accessToken)
   const exp = payload?.exp
-  if (typeof exp !== 'number') return false
+  if (typeof exp !== 'number') return true
   return Date.now() / 1000 >= exp - ACCESS_TOKEN_EXPIRY_SKEW_SECONDS
 }
 
@@ -68,7 +94,7 @@ const readTokenPairFromStorage = (storage: Storage): TokenPairCandidate | null =
   }
 }
 
-/** Prefer non-expired access; when both valid, prefer localStorage (remember-me / cross-tab). */
+/** Prefer non-expired access; without an explicit tab preference, localStorage wins ties. */
 const compareTokenPairCandidates = (a: TokenPairCandidate, b: TokenPairCandidate): number => {
   if (a.accessExpired !== b.accessExpired) return a.accessExpired ? 1 : -1
   const aIsLocal = a.storage === window.localStorage
@@ -84,8 +110,9 @@ const listTokenPairCandidates = (): TokenPairCandidate[] =>
     .sort(compareTokenPairCandidates)
 
 /**
- * Pick the best token pair: skip expired session tokens when local has a valid access token;
- * when both are still valid, prefer localStorage for remember-me / multi-tab flows.
+ * Pick the best token pair for this tab: honor the last explicit login/refresh storage
+ * when it can provide a valid access token or refresh token, otherwise fall back to
+ * non-expired access tokens and finally refresh-capable expired pairs.
  */
 const readActiveTokenPair = (): {
   access: string | null
@@ -95,6 +122,29 @@ const readActiveTokenPair = (): {
   const candidates = listTokenPairCandidates()
   if (candidates.length === 0) {
     return { access: null, refresh: null, storage: null }
+  }
+
+  const preferredStorage = getPreferredStorage()
+  const preferred = preferredStorage
+    ? candidates.find((c) => c.storage === preferredStorage && !c.accessExpired)
+    : undefined
+  if (preferred) {
+    return {
+      access: preferred.access,
+      refresh: preferred.refresh,
+      storage: preferred.storage,
+    }
+  }
+
+  const preferredWithRefresh = preferredStorage
+    ? candidates.find((c) => c.storage === preferredStorage && c.refresh != null)
+    : undefined
+  if (preferredWithRefresh) {
+    return {
+      access: null,
+      refresh: preferredWithRefresh.refresh,
+      storage: preferredWithRefresh.storage,
+    }
   }
 
   const withValidAccess = candidates.find((c) => !c.accessExpired)
@@ -172,11 +222,15 @@ export const setAuthTokens = (
   if (isValidToken(refreshToStore)) {
     storage.setItem(REFRESH_TOKEN_KEY, refreshToStore)
   }
+  setActiveStorage(storage)
 }
 
 /** Clear tokens from both sessionStorage and localStorage (logout). */
 export const clearAuthTokens = (): void => {
   for (const storage of storages()) {
     clearAuthTokensIn(storage)
+  }
+  if (typeof window !== 'undefined') {
+    window.sessionStorage.removeItem(ACTIVE_TOKEN_STORAGE_KEY)
   }
 }
