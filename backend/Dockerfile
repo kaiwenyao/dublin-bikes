@@ -16,7 +16,8 @@ ENV SPRING_PROFILES_ACTIVE=prod \
     TZ=UTC
 
 RUN groupadd --system --gid 10001 app && useradd --system --uid 10001 --gid app app
-COPY --from=build /app/target/*.jar app.jar
+# Spring Boot repackaged fat JAR (plain library JAR is saved as *.jar.original).
+COPY --from=build /app/target/bikes-*.jar app.jar
 RUN chown app:app app.jar
 USER app
 
