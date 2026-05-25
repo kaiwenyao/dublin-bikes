@@ -2,17 +2,17 @@ pipeline {
     agent {
         kubernetes {
             cloud 'kubernetes'
-            defaultContainer 'node'
+            defaultContainer 'python'
             yaml '''
 apiVersion: v1
 kind: Pod
 metadata:
   labels:
-    jenkins/label: dublin-bikes-frontend-build
+    jenkins/label: chat-service-build
 spec:
   containers:
-    - name: node
-      image: node:24-slim
+    - name: python
+      image: python:3.12-slim
       command:
         - sleep
       args:
@@ -20,8 +20,8 @@ spec:
       tty: true
       workingDir: /home/jenkins/agent
       volumeMounts:
-        - mountPath: /home/jenkins/.npm
-          name: npm-cache
+        - mountPath: /home/jenkins/.cache/pip
+          name: pip-cache
     - name: docker
       image: docker:27-cli
       command:
@@ -34,7 +34,7 @@ spec:
         - mountPath: /var/run/docker.sock
           name: docker-sock
   volumes:
-    - name: npm-cache
+    - name: pip-cache
       emptyDir: {}
     - name: docker-sock
       hostPath:
@@ -44,23 +44,20 @@ spec:
     }
 
     parameters {
+        string(name: 'IMAGE_NAME', defaultValue: 'kaiwenyao/dublin-bikes-chat-service', description: 'Docker image name')
         string(name: 'IMAGE_TAG', defaultValue: '', description: 'Image tag override (empty means branch-gitHash-jBUILD_NUMBER, e.g. main-abc1234-j88)')
         booleanParam(name: 'PUSH_IMAGE', defaultValue: true, description: 'Push image to registry')
-        booleanParam(name: 'DEPLOY_TO_SERVER', defaultValue: true, description: 'Deploy container to remote server')
-        string(name: 'CONTAINER_NAME', defaultValue: 'dublin-bikes-frontend', description: 'Container name on remote server')
-        string(name: 'CONTAINER_ENV_FILE', defaultValue: '/opt/dublin-bikes-frontend/.env', description: 'Env file path on remote server')
+        booleanParam(name: 'DEPLOY_TO_SERVER', defaultValue: false, description: 'Deploy container to remote server')
+        string(name: 'CONTAINER_NAME', defaultValue: 'dublin-bikes-chat-service', description: 'Container name on remote server')
+        string(name: 'CONTAINER_ENV_FILE', defaultValue: '/opt/dublin-bikes-chat-service/.env', description: 'Env file path on remote server')
         string(name: 'DOCKER_NETWORK', defaultValue: 'dublin-bikes-network', description: 'Docker network for deployment')
-        string(name: 'HOST_HTTP_PORT', defaultValue: '5000', description: 'Host port published to nginx (container port 80)')
-        string(name: 'BACKEND_HOST', defaultValue: 'dublin-bikes-backend', description: 'Backend container DNS name in Docker network')
-        string(name: 'BACKEND_PORT', defaultValue: '8080', description: 'Backend container port')
         string(name: 'SSH_KEY_CREDENTIALS_ID', defaultValue: 'server-ssh-key', description: 'Jenkins SSH key credential ID')
     }
 
     environment {
         DOCKER_CREDENTIALS_ID = 'docker-hub-credentials'
         SERVER_HOST_CREDENTIALS_ID = 'hel-host'
-        ENV_FILE_CREDENTIALS_ID = 'dublin-bikes-frontend.env'
-        IMAGE_REPOSITORY = 'kaiwenyao/dublin-bikes-frontend'
+        ENV_FILE_CREDENTIALS_ID = 'dublin-bikes-chat-service.env'
     }
 
     stages {
@@ -70,24 +67,26 @@ spec:
             }
         }
 
-        stage('Frontend CI') {
+        stage('Chat Service CI') {
             when {
                 anyOf {
-                    changeset pattern: 'frontend/**'
+                    changeset pattern: 'chat-service/**'
                     triggeredBy 'UserIdCause'
                 }
             }
             stages {
-                stage('2. TypeScript and ESLint Check') {
+                stage('2. Python Syntax Check') {
                     steps {
-                        container('node') {
-                            dir('frontend') {
+                        container('python') {
+                            dir('chat-service') {
                                 sh '''
-                                node --version
-                                npm --version
-                                npm ci
-                                npm run lint
-                                npx tsc --noEmit
+                                python --version
+                                python -m venv .venv
+                                . .venv/bin/activate
+                                pip install --upgrade pip
+                                pip install -r requirements.txt
+                                python -m py_compile main.py
+                                pytest -q
                                 '''
                             }
                         }
@@ -107,7 +106,7 @@ spec:
                                 def gitHash = (env.GIT_COMMIT ?: '0000000').take(7)
                                 def defaultTag = "${branch}-${gitHash}-j${env.BUILD_NUMBER}"
                                 def finalTag = params.IMAGE_TAG?.trim() ? params.IMAGE_TAG.trim() : defaultTag
-                                env.FULL_IMAGE = "${env.IMAGE_REPOSITORY}:${finalTag}"
+                                env.FULL_IMAGE = "${params.IMAGE_NAME}:${finalTag}"
                             }
 
                             withCredentials([
@@ -115,13 +114,12 @@ spec:
                                     credentialsId: env.DOCKER_CREDENTIALS_ID,
                                     usernameVariable: 'DOCKER_USER',
                                     passwordVariable: 'DOCKER_PASS'
-                                ),
-                                file(credentialsId: env.ENV_FILE_CREDENTIALS_ID, variable: 'ENV_FILE')
+                                )
                             ]) {
-                                dir('frontend') {
+                                dir('chat-service') {
                                     sh '''
                                     echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin
-                                    DOCKER_BUILDKIT=1 docker build --secret id=env,src="${ENV_FILE}" -t ${FULL_IMAGE} .
+                                    docker build -t ${FULL_IMAGE} .
                                     if [ "${PUSH_IMAGE}" = "true" ] || [ "${DEPLOY_TO_SERVER}" = "true" ]; then
                                       docker push ${FULL_IMAGE}
                                     fi
@@ -148,7 +146,6 @@ spec:
                     environment {
                         CONTAINER_ENV_FILE = "${params.CONTAINER_ENV_FILE}"
                         DOCKER_NETWORK = "${params.DOCKER_NETWORK}"
-                        HOST_HTTP_PORT = "${params.HOST_HTTP_PORT}"
                     }
                     steps {
                         container('docker') {
@@ -163,9 +160,11 @@ spec:
                                   apk add --no-cache openssh-client bash
                                 fi
 
+                                # Create .env directory on remote server if it doesn't exist
                                 ENV_DIR=$(dirname "${CONTAINER_ENV_FILE}")
                                 ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no "${SSH_USER}@${SERVER_HOST}" "mkdir -p ${ENV_DIR}"
 
+                                # Upload .env credential from Jenkins to the specified path on remote server
                                 scp -i "${SSH_KEY}" -o StrictHostKeyChecking=no "${ENV_FILE}" "${SSH_USER}@${SERVER_HOST}:${CONTAINER_ENV_FILE}"
 
                                 PASS_B64=$(printf '%s' "${DOCKER_PASS}" | base64)
@@ -174,12 +173,9 @@ spec:
                                 NAME_B64=$(printf '%s' "${CONTAINER_NAME}" | base64)
                                 ENV_FILE_B64=$(printf '%s' "${CONTAINER_ENV_FILE}" | base64)
                                 NETWORK_B64=$(printf '%s' "${DOCKER_NETWORK}" | base64)
-                                HOST_HTTP_PORT_B64=$(printf '%s' "${HOST_HTTP_PORT}" | base64)
-                                BACKEND_HOST_B64=$(printf '%s' "${BACKEND_HOST}" | base64)
-                                BACKEND_PORT_B64=$(printf '%s' "${BACKEND_PORT}" | base64)
 
                                 ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no "${SSH_USER}@${SERVER_HOST}" \
-                                "PASS_B64='${PASS_B64}' USER_B64='${USER_B64}' IMAGE_B64='${IMAGE_B64}' NAME_B64='${NAME_B64}' ENV_FILE_B64='${ENV_FILE_B64}' NETWORK_B64='${NETWORK_B64}' HOST_HTTP_PORT_B64='${HOST_HTTP_PORT_B64}' BACKEND_HOST_B64='${BACKEND_HOST_B64}' BACKEND_PORT_B64='${BACKEND_PORT_B64}' bash -s" <<'REMOTE'
+                                "PASS_B64='${PASS_B64}' USER_B64='${USER_B64}' IMAGE_B64='${IMAGE_B64}' NAME_B64='${NAME_B64}' ENV_FILE_B64='${ENV_FILE_B64}' NETWORK_B64='${NETWORK_B64}' bash -s" <<'REMOTE'
 set -e
 DOCKER_PASS=$(echo "$PASS_B64" | base64 -d)
 DOCKER_USER=$(echo "$USER_B64" | base64 -d)
@@ -187,9 +183,6 @@ FULL_IMAGE=$(echo "$IMAGE_B64" | base64 -d)
 CONTAINER_NAME=$(echo "$NAME_B64" | base64 -d)
 CONTAINER_ENV_FILE=$(echo "$ENV_FILE_B64" | base64 -d)
 DOCKER_NETWORK=$(echo "$NETWORK_B64" | base64 -d)
-HOST_HTTP_PORT=$(echo "$HOST_HTTP_PORT_B64" | base64 -d)
-BACKEND_HOST=$(echo "$BACKEND_HOST_B64" | base64 -d)
-BACKEND_PORT=$(echo "$BACKEND_PORT_B64" | base64 -d)
 
 echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
 docker pull "$FULL_IMAGE"
@@ -199,9 +192,7 @@ docker run -d \
   --name "$CONTAINER_NAME" \
   --restart unless-stopped \
   --network "$DOCKER_NETWORK" \
-  -p "${HOST_HTTP_PORT}:80" \
-  -e BACKEND_HOST="$BACKEND_HOST" \
-  -e BACKEND_PORT="$BACKEND_PORT" \
+  -e TZ=UTC \
   --env-file "$CONTAINER_ENV_FILE" \
   "$FULL_IMAGE"
 REMOTE

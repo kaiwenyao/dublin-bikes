@@ -21,7 +21,7 @@ FROM nginx:1.25-alpine
 RUN apk add --no-cache gettext
 
 ENV BACKEND_HOST=dublin-bikes-backend
-ENV BACKEND_PORT=5000
+ENV BACKEND_PORT=8080
 
 # Copy build output to nginx directory
 COPY --from=builder /app/dist /usr/share/nginx/html

@@ -539,8 +539,8 @@ DB_URL = os.environ["CHAT_DB_URL"]              # postgresql+psycopg://...
 QWEN_KEY = os.environ["ALIYUN_API_KEY"]
 QWEN_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
-llm        = ChatOpenAI(model="qwen-plus", api_key=QWEN_KEY, base_url=QWEN_BASE)
-llm_stream = ChatOpenAI(model="qwen-plus", api_key=QWEN_KEY, base_url=QWEN_BASE, streaming=True)
+llm        = ChatOpenAI(model="deepseek-chat", api_key=DEEPSEEK_KEY, base_url=DEEPSEEK_BASE)
+llm_stream = ChatOpenAI(model="deepseek-chat", api_key=DEEPSEEK_KEY, base_url=DEEPSEEK_BASE, streaming=True)
 
 def memory(session_id: str) -> SQLChatMessageHistory:
     return SQLChatMessageHistory(session_id=session_id, connection_string=DB_URL)
