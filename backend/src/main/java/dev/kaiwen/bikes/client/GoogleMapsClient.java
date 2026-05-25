@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import dev.kaiwen.bikes.config.GoogleMapsProperties;
 import dev.kaiwen.bikes.dto.ApiCodes;
 import dev.kaiwen.bikes.exception.BusinessException;
+import dev.kaiwen.bikes.util.DistanceUtils;
 import io.github.resilience4j.retry.annotation.Retry;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -72,9 +73,12 @@ public class GoogleMapsClient {
 
     @Retry(name = "gmaps", fallbackMethod = "distanceMatrixFallback")
     public int[][] distanceMatrix(List<LatLon> origins, List<LatLon> destinations, String mode) {
-        requireApiKey();
         if (origins.isEmpty() || destinations.isEmpty()) {
             return new int[0][0];
+        }
+        if (!hasApiKey()) {
+            log.warn("CONFIG_MISSING: app.google-maps.api-key is not set; using haversine duration estimates");
+            return estimateDurationMatrix(origins, destinations, mode);
         }
         JsonNode root =
                 googleMapsRestClient
@@ -91,13 +95,31 @@ public class GoogleMapsClient {
                         .retrieve()
                         .body(JsonNode.class);
         if (root == null || !"OK".equals(text(root, "status"))) {
-            throw mapsUnavailable();
+            log.warn(
+                    "Google Distance Matrix unavailable (status={}, error={}); using haversine duration estimates",
+                    root == null ? "null" : text(root, "status"),
+                    root == null ? null : text(root, "error_message"));
+            return estimateDurationMatrix(origins, destinations, mode);
         }
+        return parseDistanceMatrixResponse(root, origins.size(), destinations.size());
+    }
+
+    @SuppressWarnings("unused")
+    private int[][] distanceMatrixFallback(
+            List<LatLon> origins, List<LatLon> destinations, String mode, Throwable ex) {
+        if (ex instanceof BusinessException businessException) {
+            throw businessException;
+        }
+        log.warn("Google distance matrix failed mode={}; using haversine duration estimates", mode, ex);
+        return estimateDurationMatrix(origins, destinations, mode);
+    }
+
+    static int[][] parseDistanceMatrixResponse(JsonNode root, int originCount, int destinationCount) {
         JsonNode rows = root.path("rows");
-        int[][] result = new int[origins.size()][destinations.size()];
-        for (int i = 0; i < origins.size(); i++) {
+        int[][] result = new int[originCount][destinationCount];
+        for (int i = 0; i < originCount; i++) {
             JsonNode elements = rows.path(i).path("elements");
-            for (int j = 0; j < destinations.size(); j++) {
+            for (int j = 0; j < destinationCount; j++) {
                 JsonNode element = elements.path(j);
                 if ("OK".equals(text(element, "status"))) {
                     result[i][j] = element.path("duration").path("value").asInt(UNREACHABLE_DURATION);
@@ -109,15 +131,27 @@ public class GoogleMapsClient {
         return result;
     }
 
-    @SuppressWarnings("unused")
-    private int[][] distanceMatrixFallback(
-            List<LatLon> origins, List<LatLon> destinations, String mode, Throwable ex) {
-        log.warn("Google distance matrix failed mode={}", mode, ex);
-        throw mapsUnavailable();
+    static int[][] estimateDurationMatrix(List<LatLon> origins, List<LatLon> destinations, String mode) {
+        int[][] result = new int[origins.size()][destinations.size()];
+        for (int i = 0; i < origins.size(); i++) {
+            LatLon origin = origins.get(i);
+            for (int j = 0; j < destinations.size(); j++) {
+                LatLon destination = destinations.get(j);
+                double km =
+                        DistanceUtils.haversineKm(
+                                origin.lat(), origin.lon(), destination.lat(), destination.lon());
+                result[i][j] = DistanceUtils.estimatedDurationSeconds(km, mode);
+            }
+        }
+        return result;
+    }
+
+    private boolean hasApiKey() {
+        return properties.apiKey() != null && !properties.apiKey().isBlank();
     }
 
     private void requireApiKey() {
-        if (properties.apiKey() == null || properties.apiKey().isBlank()) {
+        if (!hasApiKey()) {
             log.error("CONFIG_MISSING: app.google-maps.api-key is not set");
             throw mapsUnavailable();
         }
