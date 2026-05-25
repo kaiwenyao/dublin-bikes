@@ -3,8 +3,8 @@ package dev.kaiwen.bikes.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -20,10 +20,18 @@ import dev.kaiwen.bikes.exception.BusinessException;
 import dev.kaiwen.bikes.model.ChatSession;
 import dev.kaiwen.bikes.repository.ChatSessionRepository;
 import dev.kaiwen.bikes.security.AuthenticatedUser;
+import com.sun.net.httpserver.HttpServer;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -228,6 +236,84 @@ class ChatServiceTest {
                 .isInstanceOf(AuthException.class);
     }
 
+    @Test
+    void chatStream_upstream5xx_completesWithErrorAndSkipsTitle() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext(
+                "/chat/stream",
+                exchange -> {
+                    byte[] body = "upstream failure".getBytes(StandardCharsets.UTF_8);
+                    exchange.sendResponseHeaders(500, body.length);
+                    exchange.getResponseBody().write(body);
+                    exchange.close();
+                });
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            setField(
+                    "properties",
+                    new ChatServiceProperties(
+                            "http://127.0.0.1:" + port, 1000, 5000, 10000, 3000));
+
+            ChatSession session = session("user_1_chat_default", 1);
+            session.setTitle(null);
+            when(chatSessionRepository.findById("user_1_chat_default"))
+                    .thenReturn(Optional.of(session));
+
+            TrackingSseEmitter emitter = new TrackingSseEmitter(5000L);
+
+            chatService.chatStream("hello", "default", emitter);
+
+            assertThat(emitter.awaitDone(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(emitter.error.get()).isInstanceOf(BusinessException.class);
+            BusinessException be = (BusinessException) emitter.error.get();
+            assertThat(be.getStatus()).isEqualTo(502);
+            verify(chatTitleGenerator, never()).generate(any(), any());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void chatStream_upstream2xx_forwardsSseAndTriggersTitle() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext(
+                "/chat/stream",
+                exchange -> {
+                    String sse = "data: {\"content\":\"hi\"}\n\ndata: [DONE]\n\n";
+                    byte[] body = sse.getBytes(StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+                    exchange.sendResponseHeaders(200, body.length);
+                    try (OutputStream out = exchange.getResponseBody()) {
+                        out.write(body);
+                    }
+                    exchange.close();
+                });
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            setField(
+                    "properties",
+                    new ChatServiceProperties(
+                            "http://127.0.0.1:" + port, 1000, 5000, 10000, 3000));
+
+            ChatSession session = session("user_1_chat_default", 1);
+            session.setTitle(null);
+            when(chatSessionRepository.findById("user_1_chat_default"))
+                    .thenReturn(Optional.of(session));
+
+            TrackingSseEmitter emitter = new TrackingSseEmitter(5000L);
+
+            chatService.chatStream("hello", "default", emitter);
+
+            assertThat(emitter.awaitDone(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(emitter.error.get()).isNull();
+            verify(chatTitleGenerator, timeout(5000)).generate("user_1_chat_default", "hello");
+        } finally {
+            server.stop(0);
+        }
+    }
+
     private static ChatSession session(String id, int userId) {
         ChatSession session = new ChatSession();
         session.setId(id);
@@ -241,5 +327,31 @@ class ChatServiceTest {
         var field = ChatService.class.getDeclaredField(name);
         field.setAccessible(true);
         field.set(chatService, value);
+    }
+
+    private static final class TrackingSseEmitter extends SseEmitter {
+        private final CountDownLatch done = new CountDownLatch(1);
+        private final AtomicReference<Throwable> error = new AtomicReference<>();
+
+        TrackingSseEmitter(long timeout) {
+            super(timeout);
+        }
+
+        @Override
+        public void complete() {
+            done.countDown();
+            super.complete();
+        }
+
+        @Override
+        public void completeWithError(Throwable ex) {
+            error.set(ex);
+            done.countDown();
+            super.completeWithError(ex);
+        }
+
+        boolean awaitDone(long timeout, TimeUnit unit) throws InterruptedException {
+            return done.await(timeout, unit);
+        }
     }
 }
