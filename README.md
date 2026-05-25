@@ -10,7 +10,7 @@ dublin-bikes/
 │   └── pom.xml
 ├── frontend/        # 前端工程 (待初始化)
 │   └── ...
-├── chat-service/    # 独立 Python LLM 微服务 (FastAPI + LangChain + Qwen，S5 落地)
+├── chat-service/    # 独立 Python LLM 微服务 (FastAPI + LangChain + DeepSeek，S5 落地)
 │   └── ...
 ├── .gitignore
 └── README.md
@@ -35,13 +35,13 @@ cd backend
 
 ## Chat Service (Python)
 
-独立 Python 微服务，承担所有 LLM 逻辑（LangChain + Qwen + `message_store` 读写）。默认端口 **8002**；Spring 通过 `app.chat-service.base-url` 代理（见 [backend/devplan/04-modules.md §5.7](./backend/devplan/04-modules.md)）。
+独立 Python 微服务，承担所有 LLM 逻辑（LangChain + DeepSeek + `message_store` 读写）。默认端口 **8002**；Spring 通过 `app.chat-service.base-url` 代理（见 [backend/devplan/04-modules.md §5.7](./backend/devplan/04-modules.md)）。
 
 ```bash
 cd chat-service
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # 设置 CHAT_DB_URL、ALIYUN_API_KEY
+cp .env.example .env   # 设置 CHAT_DB_URL、DEEPSEEK_API_KEY
 uvicorn main:app --host 0.0.0.0 --port 8002
 curl http://localhost:8002/health
 ```

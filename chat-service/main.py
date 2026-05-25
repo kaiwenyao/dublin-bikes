@@ -1,4 +1,4 @@
-"""Dublin Bikes chat-service: LangChain + Qwen over FastAPI."""
+"""Dublin Bikes chat-service: LangChain + DeepSeek over FastAPI."""
 
 from __future__ import annotations
 
@@ -24,16 +24,16 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     chat_db_url: str | None = Field(default=None, validation_alias="CHAT_DB_URL")
-    aliyun_api_key: str | None = Field(default=None, validation_alias="ALIYUN_API_KEY")
-    qwen_base_url: str = Field(
-        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        validation_alias="QWEN_BASE_URL",
+    deepseek_api_key: str | None = Field(default=None, validation_alias="DEEPSEEK_API_KEY")
+    deepseek_base_url: str = Field(
+        default="https://api.deepseek.com",
+        validation_alias="DEEPSEEK_BASE_URL",
     )
-    qwen_model: str = Field(default="qwen-plus", validation_alias="QWEN_MODEL")
+    deepseek_model: str = Field(default="deepseek-chat", validation_alias="DEEPSEEK_MODEL")
 
     @property
     def is_configured(self) -> bool:
-        return bool(self.chat_db_url and self.aliyun_api_key)
+        return bool(self.chat_db_url and self.deepseek_api_key)
 
 
 @lru_cache
@@ -78,7 +78,7 @@ def _require_runtime() -> Settings:
     if not settings.is_configured:
         raise HTTPException(
             status_code=503,
-            detail="CHAT_DB_URL and ALIYUN_API_KEY must be set",
+            detail="CHAT_DB_URL and DEEPSEEK_API_KEY must be set",
         )
     return settings
 
@@ -94,9 +94,9 @@ def _memory(session_id: str, settings: Settings) -> SQLChatMessageHistory:
 def _llm(sync: bool = True) -> ChatOpenAI:
     settings = _require_runtime()
     return ChatOpenAI(
-        model=settings.qwen_model,
-        api_key=settings.aliyun_api_key,
-        base_url=settings.qwen_base_url,
+        model=settings.deepseek_model,
+        api_key=settings.deepseek_api_key,
+        base_url=settings.deepseek_base_url,
         streaming=not sync,
     )
 
