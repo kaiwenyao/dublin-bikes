@@ -118,6 +118,7 @@ public class GoogleMapsClient {
 
     private void requireApiKey() {
         if (properties.apiKey() == null || properties.apiKey().isBlank()) {
+            log.error("CONFIG_MISSING: app.google-maps.api-key is not set");
             throw mapsUnavailable();
         }
     }
@@ -132,7 +133,7 @@ public class GoogleMapsClient {
     }
 
     private static BusinessException addressNotResolved() {
-        return new BusinessException(ApiCodes.NO_AVAILABLE_ROUTE, "no available route", 404);
+        return new BusinessException(ApiCodes.ADDRESS_NOT_RESOLVED, "address could not be resolved", 404);
     }
 
     private static BusinessException mapsUnavailable() {

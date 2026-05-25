@@ -51,16 +51,15 @@ public class JourneyService {
                         .collect(Collectors.toMap(Station::getNumber, Function.identity()));
 
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
-        LocalDateTime minTimestamp = now.minusHours(1);
-        LocalDateTime freshTimestamp = now.minusMinutes(30);
+        LocalDateTime lookupSince = now.minusHours(1);
+        LocalDateTime freshSince = now.minusMinutes(30);
 
         List<StationAvailability> eligible =
-                availabilityRepository.findLatestPerStation().stream()
+                availabilityRepository.findLatestPerStationSince(lookupSince).stream()
                         .filter(
                                 a ->
                                         STATUS_OPEN.equals(a.getStatus())
-                                                && !a.getTimestamp().isBefore(minTimestamp)
-                                                && !a.getTimestamp().isBefore(freshTimestamp))
+                                                && !a.getTimestamp().isBefore(freshSince))
                         .map(a -> new StationAvailability(stationsByNumber.get(a.getNumber()), a))
                         .filter(sa -> sa.station() != null)
                         .toList();
