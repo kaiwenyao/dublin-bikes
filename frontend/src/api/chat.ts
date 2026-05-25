@@ -45,7 +45,6 @@ function openStream(
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${token}`,
-    token,
   }
   return new Promise((resolve, reject) => {
     let completed = false
