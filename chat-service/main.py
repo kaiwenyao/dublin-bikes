@@ -102,8 +102,6 @@ def _psycopg_conninfo(db_url: str) -> str:
             fixed_query.append((key, "require"))
         else:
             fixed_query.append((key, value))
-    if parsed.query == "sslmode":
-        fixed_query = [("sslmode", "require")]
     return urlunparse(parsed._replace(scheme=scheme, query=urlencode(fixed_query)))
 
 
@@ -167,8 +165,13 @@ def chat(req: ChatRequest) -> ChatReply:
     settings = _require_runtime()
     _ensure_session_row(req.session_id, req.user_id, settings)
     mem = _memory(req.session_id, settings)
-    mem.add_message(HumanMessage(content=req.message))
-    ai = _llm(sync=True).invoke(mem.messages)
+    pending = HumanMessage(content=req.message)
+    try:
+        ai = _llm(sync=True).invoke(list(mem.messages) + [pending])
+    except Exception:
+        logger.exception("chat failed for session_id=%s", req.session_id)
+        raise
+    mem.add_message(pending)
     mem.add_message(AIMessage(content=ai.content))
     return ChatReply(chat_id=req.session_id, reply=ai.content)
 
@@ -178,8 +181,8 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
     settings = _require_runtime()
     _ensure_session_row(req.session_id, req.user_id, settings)
     mem = _memory(req.session_id, settings)
-    mem.add_message(HumanMessage(content=req.message))
-    history = mem.messages
+    pending = HumanMessage(content=req.message)
+    history = list(mem.messages) + [pending]
     llm_stream = _llm(sync=False)
 
     async def event_generator():
@@ -192,6 +195,7 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
                     continue
                 chunks.append(piece)
                 yield {"data": json.dumps({"content": piece})}
+            mem.add_message(pending)
             mem.add_message(AIMessage(content="".join(chunks)))
             persisted = True
             yield {"data": "[DONE]"}
@@ -200,7 +204,14 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
             raise
         finally:
             if chunks and not persisted:
-                mem.add_message(AIMessage(content="".join(chunks)))
+                try:
+                    mem.add_message(pending)
+                    mem.add_message(AIMessage(content="".join(chunks)))
+                except Exception:
+                    logger.exception(
+                        "failed to persist partial stream for session_id=%s",
+                        req.session_id,
+                    )
 
     return EventSourceResponse(event_generator())
 
