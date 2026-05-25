@@ -4,6 +4,9 @@ export const ACCESS_TOKEN_KEY = 'access_token'
 /** Key for storing refresh_token returned by backend after login in storage */
 export const REFRESH_TOKEN_KEY = 'refresh_token'
 
+/** Seconds before JWT exp to treat access token as expired (clock skew). */
+const ACCESS_TOKEN_EXPIRY_SKEW_SECONDS = 30
+
 interface AuthTokenPayload {
   accessToken: string
   refreshToken?: string
@@ -12,6 +15,13 @@ interface AuthTokenPayload {
 export interface SetAuthTokensOptions {
   /** true = localStorage (persists after closing browser), false = sessionStorage (clears when tab/browser closes) */
   persistent?: boolean
+}
+
+interface TokenPairCandidate {
+  access: string
+  refresh: string | null
+  storage: Storage
+  accessExpired: boolean
 }
 
 const isValidToken = (value: string | null): value is string =>
@@ -27,26 +37,82 @@ const clearAuthTokensIn = (storage: Storage): void => {
   storage.removeItem(REFRESH_TOKEN_KEY)
 }
 
+const decodeJwtPayload = (token: string): Record<string, unknown> | null => {
+  const parts = token.split('.')
+  if (parts.length < 2) return null
+  try {
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
+    return JSON.parse(atob(padded)) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+const isAccessTokenExpired = (accessToken: string): boolean => {
+  const payload = decodeJwtPayload(accessToken)
+  const exp = payload?.exp
+  if (typeof exp !== 'number') return false
+  return Date.now() / 1000 >= exp - ACCESS_TOKEN_EXPIRY_SKEW_SECONDS
+}
+
+const readTokenPairFromStorage = (storage: Storage): TokenPairCandidate | null => {
+  const access = storage.getItem(ACCESS_TOKEN_KEY)
+  if (!isValidToken(access)) return null
+  const refresh = storage.getItem(REFRESH_TOKEN_KEY)
+  return {
+    access,
+    refresh: isValidToken(refresh) ? refresh : null,
+    storage,
+    accessExpired: isAccessTokenExpired(access),
+  }
+}
+
+/** Prefer non-expired access; when both valid, prefer localStorage (remember-me / cross-tab). */
+const compareTokenPairCandidates = (a: TokenPairCandidate, b: TokenPairCandidate): number => {
+  if (a.accessExpired !== b.accessExpired) return a.accessExpired ? 1 : -1
+  const aIsLocal = a.storage === window.localStorage
+  const bIsLocal = b.storage === window.localStorage
+  if (aIsLocal !== bIsLocal) return aIsLocal ? -1 : 1
+  return 0
+}
+
+const listTokenPairCandidates = (): TokenPairCandidate[] =>
+  storages()
+    .map(readTokenPairFromStorage)
+    .filter((candidate): candidate is TokenPairCandidate => candidate != null)
+    .sort(compareTokenPairCandidates)
+
 /**
- * Return access/refresh from the first storage that has a valid access token.
- * Prefer sessionStorage so an active tab session wins over stale localStorage leftovers.
+ * Pick the best token pair: skip expired session tokens when local has a valid access token;
+ * when both are still valid, prefer localStorage for remember-me / multi-tab flows.
  */
 const readActiveTokenPair = (): {
   access: string | null
   refresh: string | null
   storage: Storage | null
 } => {
-  for (const storage of storages()) {
-    const access = storage.getItem(ACCESS_TOKEN_KEY)
-    if (!isValidToken(access)) continue
-    const refresh = storage.getItem(REFRESH_TOKEN_KEY)
+  const candidates = listTokenPairCandidates()
+  if (candidates.length === 0) {
+    return { access: null, refresh: null, storage: null }
+  }
+
+  const withValidAccess = candidates.find((c) => !c.accessExpired)
+  if (withValidAccess) {
     return {
-      access,
-      refresh: isValidToken(refresh) ? refresh : null,
-      storage,
+      access: withValidAccess.access,
+      refresh: withValidAccess.refresh,
+      storage: withValidAccess.storage,
     }
   }
-  return { access: null, refresh: null, storage: null }
+
+  const withRefresh = candidates.find((c) => c.refresh != null)
+  if (withRefresh) {
+    return { access: null, refresh: withRefresh.refresh, storage: withRefresh.storage }
+  }
+
+  const fallback = candidates[0]
+  return { access: null, refresh: null, storage: fallback.storage }
 }
 
 /**
