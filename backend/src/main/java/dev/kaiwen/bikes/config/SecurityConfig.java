@@ -59,6 +59,8 @@ public class SecurityConfig {
                                         .authenticated()
                                         .requestMatchers(HttpMethod.POST, "/api/users/logout")
                                         .authenticated()
+                                        .requestMatchers("/api/chat/**")
+                                        .authenticated()
                                         .anyRequest()
                                         .denyAll())
                 .addFilterBefore(
