@@ -14,14 +14,19 @@ export interface SetAuthTokensOptions {
   persistent?: boolean
 }
 
+const isValidToken = (value: string | null): value is string =>
+  value != null && value !== '' && value !== 'null' && value !== 'undefined'
+
 /**
- * Return current Storage containing token: prioritize sessionStorage, then localStorage.
- * Used for reading token and writing to same storage during refresh.
+ * Return current Storage containing a valid token: prioritize localStorage, then sessionStorage.
+ * Used for writing to same storage during refresh.
  */
 const getTokenStorage = (): Storage | null => {
   if (typeof window === 'undefined') return null
-  if (window.sessionStorage.getItem(ACCESS_TOKEN_KEY)) return window.sessionStorage
-  if (window.localStorage.getItem(ACCESS_TOKEN_KEY)) return window.localStorage
+  const localAccess = window.localStorage.getItem(ACCESS_TOKEN_KEY)
+  const sessionAccess = window.sessionStorage.getItem(ACCESS_TOKEN_KEY)
+  if (isValidToken(localAccess)) return window.localStorage
+  if (isValidToken(sessionAccess)) return window.sessionStorage
   return null
 }
 
@@ -33,11 +38,23 @@ const getStorageByPersistent = (persistent: boolean): Storage | null => {
   return persistent ? window.localStorage : window.sessionStorage
 }
 
-export const getAccessToken = (): string | null =>
-  getTokenStorage()?.getItem(ACCESS_TOKEN_KEY) ?? null
+export const getAccessToken = (): string | null => {
+  if (typeof window === 'undefined') return null
+  const local = window.localStorage.getItem(ACCESS_TOKEN_KEY)
+  if (isValidToken(local)) return local
+  const session = window.sessionStorage.getItem(ACCESS_TOKEN_KEY)
+  if (isValidToken(session)) return session
+  return null
+}
 
-export const getRefreshToken = (): string | null =>
-  getTokenStorage()?.getItem(REFRESH_TOKEN_KEY) ?? null
+export const getRefreshToken = (): string | null => {
+  if (typeof window === 'undefined') return null
+  const local = window.localStorage.getItem(REFRESH_TOKEN_KEY)
+  if (isValidToken(local)) return local
+  const session = window.sessionStorage.getItem(REFRESH_TOKEN_KEY)
+  if (isValidToken(session)) return session
+  return null
+}
 
 /**
  * Write access/refresh token.
@@ -54,6 +71,7 @@ export const setAuthTokens = (
       : getTokenStorage() ?? (typeof window !== 'undefined' ? window.localStorage : null)
   if (!storage) return
 
+  clearAuthTokens()
   storage.setItem(ACCESS_TOKEN_KEY, accessToken)
   if (refreshToken) {
     storage.setItem(REFRESH_TOKEN_KEY, refreshToken)
