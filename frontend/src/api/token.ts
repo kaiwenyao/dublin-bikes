@@ -6,6 +6,7 @@ export const REFRESH_TOKEN_KEY = 'refresh_token'
 
 /** Per-tab preference for which storage should back outgoing requests. */
 const ACTIVE_TOKEN_STORAGE_KEY = 'active_token_storage'
+const ACTIVE_TOKEN_SUBJECT_KEY = 'active_token_subject'
 const SESSION_STORAGE_VALUE = 'session'
 const LOCAL_STORAGE_VALUE = 'local'
 
@@ -27,6 +28,7 @@ interface TokenPairCandidate {
   refresh: string | null
   storage: Storage
   accessExpired: boolean
+  subject: string | null
 }
 
 const isValidToken = (value: string | null): value is string =>
@@ -49,10 +51,22 @@ const storagePreferenceValue = (storage: Storage): string | null => {
   return null
 }
 
-const setActiveStorage = (storage: Storage): void => {
+const tokenSubject = (token: string): string | null => {
+  const payload = decodeJwtPayload(token)
+  const subject = payload?.sub
+  return typeof subject === 'string' && subject.trim() !== '' ? subject : null
+}
+
+const setActiveStorage = (storage: Storage, accessToken: string): void => {
   if (typeof window === 'undefined') return
   const value = storagePreferenceValue(storage)
   if (value) window.sessionStorage.setItem(ACTIVE_TOKEN_STORAGE_KEY, value)
+  const subject = tokenSubject(accessToken)
+  if (subject) {
+    window.sessionStorage.setItem(ACTIVE_TOKEN_SUBJECT_KEY, subject)
+  } else {
+    window.sessionStorage.removeItem(ACTIVE_TOKEN_SUBJECT_KEY)
+  }
 }
 
 const getPreferredStorage = (): Storage | null => {
@@ -61,6 +75,12 @@ const getPreferredStorage = (): Storage | null => {
   if (value === SESSION_STORAGE_VALUE) return window.sessionStorage
   if (value === LOCAL_STORAGE_VALUE) return window.localStorage
   return null
+}
+
+const getActiveSubject = (): string | null => {
+  if (typeof window === 'undefined') return null
+  const subject = window.sessionStorage.getItem(ACTIVE_TOKEN_SUBJECT_KEY)
+  return subject != null && subject.trim() !== '' ? subject : null
 }
 
 const decodeJwtPayload = (token: string): Record<string, unknown> | null => {
@@ -91,6 +111,7 @@ const readTokenPairFromStorage = (storage: Storage): TokenPairCandidate | null =
     refresh: isValidToken(refresh) ? refresh : null,
     storage,
     accessExpired: isAccessTokenExpired(access),
+    subject: tokenSubject(access),
   }
 }
 
@@ -111,8 +132,8 @@ const listTokenPairCandidates = (): TokenPairCandidate[] =>
 
 /**
  * Pick the best token pair for this tab: honor the last explicit login/refresh storage
- * when it can provide a valid access token, otherwise fall back to any non-expired
- * access token before trying refresh-capable expired pairs.
+ * when it can provide a valid access token, otherwise use a same-subject non-expired
+ * access token before refreshing the preferred storage.
  */
 const readActiveTokenPair = (): {
   access: string | null
@@ -125,6 +146,7 @@ const readActiveTokenPair = (): {
   }
 
   const preferredStorage = getPreferredStorage()
+  const activeSubject = getActiveSubject()
   const preferred = preferredStorage
     ? candidates.find((c) => c.storage === preferredStorage && !c.accessExpired)
     : undefined
@@ -136,8 +158,31 @@ const readActiveTokenPair = (): {
     }
   }
 
+  const preferredWithRefresh = preferredStorage
+    ? candidates.find((c) => c.storage === preferredStorage && c.refresh != null)
+    : undefined
+  const preferredSubject = preferredWithRefresh?.subject ?? activeSubject
+
+  const sameSubjectValidAccess = preferredSubject
+    ? candidates.find((c) => !c.accessExpired && c.subject === preferredSubject)
+    : undefined
+  if (sameSubjectValidAccess) {
+    return {
+      access: sameSubjectValidAccess.access,
+      refresh: sameSubjectValidAccess.refresh,
+      storage: sameSubjectValidAccess.storage,
+    }
+  }
+
   const withValidAccess = candidates.find((c) => !c.accessExpired)
   if (withValidAccess) {
+    if (preferredWithRefresh && preferredSubject && withValidAccess.subject !== preferredSubject) {
+      return {
+        access: null,
+        refresh: preferredWithRefresh.refresh,
+        storage: preferredWithRefresh.storage,
+      }
+    }
     return {
       access: withValidAccess.access,
       refresh: withValidAccess.refresh,
@@ -145,9 +190,6 @@ const readActiveTokenPair = (): {
     }
   }
 
-  const preferredWithRefresh = preferredStorage
-    ? candidates.find((c) => c.storage === preferredStorage && c.refresh != null)
-    : undefined
   if (preferredWithRefresh) {
     return {
       access: null,
@@ -222,7 +264,7 @@ export const setAuthTokens = (
   if (isValidToken(refreshToStore)) {
     storage.setItem(REFRESH_TOKEN_KEY, refreshToStore)
   }
-  setActiveStorage(storage)
+  setActiveStorage(storage, accessToken)
 }
 
 /** Clear tokens from both sessionStorage and localStorage (logout). */
@@ -232,5 +274,6 @@ export const clearAuthTokens = (): void => {
   }
   if (typeof window !== 'undefined') {
     window.sessionStorage.removeItem(ACTIVE_TOKEN_STORAGE_KEY)
+    window.sessionStorage.removeItem(ACTIVE_TOKEN_SUBJECT_KEY)
   }
 }
