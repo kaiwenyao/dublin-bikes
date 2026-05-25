@@ -28,6 +28,23 @@ class AvailabilityRepositoryTest {
     }
 
     @Test
+    void findLatestPerStationSince_ignoresRowsOlderThanWindow() {
+        persistAvailability(1, LocalDateTime.parse("2025-01-20T08:00:00"), 1, 10);
+        persistAvailability(1, LocalDateTime.parse("2025-01-20T10:00:00"), 5, 8);
+        persistAvailability(2, LocalDateTime.parse("2025-01-20T07:00:00"), 9, 9);
+        entityManager.flush();
+        entityManager.clear();
+
+        List<Availability> latest =
+                availabilityRepository.findLatestPerStationSince(
+                        LocalDateTime.parse("2025-01-20T09:00:00"));
+
+        assertThat(latest).hasSize(1);
+        assertThat(latest.getFirst().getNumber()).isEqualTo(1);
+        assertThat(latest.getFirst().getAvailableBikes()).isEqualTo(5);
+    }
+
+    @Test
     void findLatestPerStation_returnsOneRowPerStation() {
         persistAvailability(1, LocalDateTime.parse("2025-01-20T09:00:00"), 3, 10);
         persistAvailability(1, LocalDateTime.parse("2025-01-20T10:00:00"), 5, 8);
