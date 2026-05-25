@@ -65,7 +65,7 @@ const getPreferredStorage = (): Storage | null => {
 
 const decodeJwtPayload = (token: string): Record<string, unknown> | null => {
   const parts = token.split('.')
-  if (parts.length < 2) return null
+  if (parts.length !== 3) return null
   try {
     const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
     const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
@@ -111,8 +111,8 @@ const listTokenPairCandidates = (): TokenPairCandidate[] =>
 
 /**
  * Pick the best token pair for this tab: honor the last explicit login/refresh storage
- * when it can provide a valid access token or refresh token, otherwise fall back to
- * non-expired access tokens and finally refresh-capable expired pairs.
+ * when it can provide a valid access token, otherwise fall back to any non-expired
+ * access token before trying refresh-capable expired pairs.
  */
 const readActiveTokenPair = (): {
   access: string | null
@@ -136,6 +136,15 @@ const readActiveTokenPair = (): {
     }
   }
 
+  const withValidAccess = candidates.find((c) => !c.accessExpired)
+  if (withValidAccess) {
+    return {
+      access: withValidAccess.access,
+      refresh: withValidAccess.refresh,
+      storage: withValidAccess.storage,
+    }
+  }
+
   const preferredWithRefresh = preferredStorage
     ? candidates.find((c) => c.storage === preferredStorage && c.refresh != null)
     : undefined
@@ -144,15 +153,6 @@ const readActiveTokenPair = (): {
       access: null,
       refresh: preferredWithRefresh.refresh,
       storage: preferredWithRefresh.storage,
-    }
-  }
-
-  const withValidAccess = candidates.find((c) => !c.accessExpired)
-  if (withValidAccess) {
-    return {
-      access: withValidAccess.access,
-      refresh: withValidAccess.refresh,
-      storage: withValidAccess.storage,
     }
   }
 
