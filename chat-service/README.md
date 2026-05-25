@@ -4,7 +4,7 @@ Independent Python microservice for LLM chat (FastAPI + LangChain + DeepSeek). S
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.12+ (matches Dockerfile and Jenkins agent)
 - PostgreSQL with `message_store` table (created by backend Flyway `V1__baseline.sql`)
 - DeepSeek API key (`DEEPSEEK_API_KEY`)
 
@@ -62,3 +62,5 @@ docker run --rm -p 8002:8002 --env-file .env dublin-bikes-chat-service:local
 ## CI/CD
 
 See [Jenkinsfile](./Jenkinsfile). Jenkins credential: `dublin-bikes-chat-service.env` (not committed).
+
+Production deploy joins `dublin-bikes-network` only (no host port mapping). Spring reaches this service at `http://dublin-bikes-chat-service:8002` from inside Docker; do not expose `:8002` on the public host without a firewall in front.
