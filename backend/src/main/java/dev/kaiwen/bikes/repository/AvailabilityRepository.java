@@ -9,11 +9,12 @@ import org.springframework.data.repository.query.Param;
 
 public interface AvailabilityRepository extends JpaRepository<Availability, Integer> {
 
-    @Query(
-            "SELECT a FROM Availability a "
-                    + "WHERE a.number = :number AND a.timestamp >= :since "
-                    + "ORDER BY a.timestamp DESC")
-    List<Availability> findRecent(@Param("number") int number, @Param("since") LocalDateTime since);
+    List<Availability> findByNumberAndTimestampGreaterThanEqualOrderByTimestampDesc(
+            int number, LocalDateTime since);
+
+    default List<Availability> findRecent(int number, LocalDateTime since) {
+        return findByNumberAndTimestampGreaterThanEqualOrderByTimestampDesc(number, since);
+    }
 
     @Query(
             value =
