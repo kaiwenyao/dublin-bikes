@@ -1,12 +1,12 @@
 # Dublin Bikes Chat Service
 
-Independent Python microservice for LLM chat (FastAPI + LangChain + Qwen). Spring Boot proxies `/api/chat/*` to this service; this service owns `message_store` reads/writes via LangChain `SQLChatMessageHistory`.
+Independent Python microservice for LLM chat (FastAPI + LangChain + DeepSeek). Spring Boot proxies `/api/chat/*` to this service; this service owns `message_store` reads/writes via LangChain `SQLChatMessageHistory`.
 
 ## Requirements
 
 - Python 3.11+
 - PostgreSQL with `message_store` table (created by backend Flyway `V1__baseline.sql`)
-- Alibaba Cloud DashScope API key (`ALIYUN_API_KEY`)
+- DeepSeek API key (`DEEPSEEK_API_KEY`)
 
 ## Local setup
 
@@ -15,7 +15,7 @@ cd chat-service
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env        # set CHAT_DB_URL and ALIYUN_API_KEY
+cp .env.example .env        # set CHAT_DB_URL and DEEPSEEK_API_KEY
 uvicorn main:app --host 0.0.0.0 --port 8002
 ```
 
