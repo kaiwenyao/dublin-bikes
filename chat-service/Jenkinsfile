@@ -191,7 +191,6 @@ docker run -d \
   --name "$CONTAINER_NAME" \
   --restart unless-stopped \
   --network "$DOCKER_NETWORK" \
-  -p 8002:8002 \
   -e TZ=UTC \
   --env-file "$CONTAINER_ENV_FILE" \
   "$FULL_IMAGE"

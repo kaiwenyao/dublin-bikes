@@ -41,6 +41,8 @@ Spring default upstream: `http://localhost:8002` (`app.chat-service.base-url` in
 
 This service **does not** validate that `user_id` owns `session_id`. Spring Boot is expected to authenticate the caller (JWT), enforce `sessions` table ACL, and only forward requests for sessions that belong to that user. Treat direct calls to this service (bypassing Spring) as trusted-network only.
 
+Before writing to `message_store`, `POST /chat` and `POST /chat/stream` upsert a row in `sessions` (id + `user_id`) so the Flyway V2 FK is satisfied. **`user_id` must reference an existing `users.id`** when testing directly (e.g. Postman). See [`docs/api/README.md`](../docs/api/README.md).
+
 ## Tests
 
 ```bash
