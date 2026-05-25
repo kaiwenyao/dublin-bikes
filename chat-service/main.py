@@ -1,0 +1,174 @@
+"""Dublin Bikes chat-service: LangChain + Qwen over FastAPI."""
+
+from __future__ import annotations
+
+import json
+import logging
+from functools import lru_cache
+from typing import Any
+
+from fastapi import FastAPI, HTTPException
+from langchain_community.chat_message_histories import SQLChatMessageHistory
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_openai import ChatOpenAI
+from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from sse_starlette.sse import EventSourceResponse
+
+logger = logging.getLogger(__name__)
+
+ROLE_MAP = {"human": "user", "ai": "assistant"}
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    chat_db_url: str | None = Field(default=None, validation_alias="CHAT_DB_URL")
+    aliyun_api_key: str | None = Field(default=None, validation_alias="ALIYUN_API_KEY")
+    qwen_base_url: str = Field(
+        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        validation_alias="QWEN_BASE_URL",
+    )
+    qwen_model: str = Field(default="qwen-plus", validation_alias="QWEN_MODEL")
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.chat_db_url and self.aliyun_api_key)
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+
+
+class ChatRequest(BaseModel):
+    session_id: str
+    user_id: int
+    message: str
+
+
+class ChatReply(BaseModel):
+    chat_id: str
+    reply: str
+
+
+class TitleRequest(BaseModel):
+    message: str
+
+
+class TitleReply(BaseModel):
+    title: str
+
+
+class HealthReply(BaseModel):
+    status: str
+    configured: bool
+
+
+class MessageItem(BaseModel):
+    role: str
+    content: str
+
+
+app = FastAPI(title="dublin-bikes-chat-service", version="1.0.0")
+
+
+def _require_runtime() -> Settings:
+    settings = get_settings()
+    if not settings.is_configured:
+        raise HTTPException(
+            status_code=503,
+            detail="CHAT_DB_URL and ALIYUN_API_KEY must be set",
+        )
+    return settings
+
+
+def _memory(session_id: str, settings: Settings) -> SQLChatMessageHistory:
+    return SQLChatMessageHistory(
+        session_id=session_id,
+        connection_string=settings.chat_db_url,
+    )
+
+
+@lru_cache
+def _llm(sync: bool = True) -> ChatOpenAI:
+    settings = _require_runtime()
+    return ChatOpenAI(
+        model=settings.qwen_model,
+        api_key=settings.aliyun_api_key,
+        base_url=settings.qwen_base_url,
+        streaming=not sync,
+    )
+
+
+def _map_messages(messages: list[Any]) -> list[MessageItem]:
+    items: list[MessageItem] = []
+    for message in messages:
+        role = ROLE_MAP.get(getattr(message, "type", ""), getattr(message, "type", "unknown"))
+        content = getattr(message, "content", "")
+        if isinstance(content, list):
+            content = json.dumps(content)
+        items.append(MessageItem(role=role, content=str(content)))
+    return items
+
+
+@app.get("/health", response_model=HealthReply)
+def health() -> HealthReply:
+    settings = get_settings()
+    return HealthReply(status="ok", configured=settings.is_configured)
+
+
+@app.post("/chat", response_model=ChatReply)
+def chat(req: ChatRequest) -> ChatReply:
+    settings = _require_runtime()
+    mem = _memory(req.session_id, settings)
+    mem.add_message(HumanMessage(content=req.message))
+    ai = _llm(sync=True).invoke(mem.messages)
+    mem.add_message(AIMessage(content=ai.content))
+    return ChatReply(chat_id=req.session_id, reply=ai.content)
+
+
+@app.post("/chat/stream")
+async def chat_stream(req: ChatRequest) -> EventSourceResponse:
+    settings = _require_runtime()
+    mem = _memory(req.session_id, settings)
+    mem.add_message(HumanMessage(content=req.message))
+    history = mem.messages
+    llm_stream = _llm(sync=False)
+
+    async def event_generator():
+        chunks: list[str] = []
+        try:
+            async for event in llm_stream.astream(history):
+                piece = event.content if isinstance(event.content, str) else str(event.content)
+                if not piece:
+                    continue
+                chunks.append(piece)
+                yield {"data": json.dumps({"content": piece})}
+            mem.add_message(AIMessage(content="".join(chunks)))
+            yield {"data": "[DONE]"}
+        except Exception:
+            logger.exception("chat stream failed for session_id=%s", req.session_id)
+            raise
+
+    return EventSourceResponse(event_generator())
+
+
+@app.post("/chat/title", response_model=TitleReply)
+def chat_title(req: TitleRequest) -> TitleReply:
+    _require_runtime()
+    snippet = req.message[:200]
+    prompt = (
+        "Summarize the topic of this sentence in 6 words or less, "
+        "output only the title without punctuation: "
+        + snippet
+    )
+    out = _llm(sync=True).invoke([HumanMessage(content=prompt)])
+    title = (out.content or "").strip()[:50]
+    return TitleReply(title=title)
+
+
+@app.get("/sessions/{session_id}/messages", response_model=list[MessageItem])
+def session_messages(session_id: str) -> list[MessageItem]:
+    settings = _require_runtime()
+    return _map_messages(_memory(session_id, settings).messages)
