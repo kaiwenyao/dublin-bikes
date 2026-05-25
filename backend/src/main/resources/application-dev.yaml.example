@@ -48,3 +48,9 @@ app:
     from: ${MAIL_FROM:}
     from-name: ${MAIL_DEFAULT_FROM_NAME:Dublin Bikes}
     frontend-base-url: ${FRONTEND_BASE_URL:http://localhost:5173}
+
+  google-maps:
+    api-key: ${GOOGLE_MAPS_API_KEY:}
+    connect-timeout-ms: 5000
+    read-timeout-ms: 10000
+    max-retries: 2

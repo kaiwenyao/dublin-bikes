@@ -19,7 +19,7 @@ Postman workspace **Dublin Bikes** contains:
 
 | Route | Auth |
 |-------|------|
-| `GET /api/stations/**`, `GET /api/weather` | Public |
+| `GET /api/stations/**`, `GET /api/weather`, `POST /api/journey/plan` | Public |
 | `POST /api/users/register`, login, refresh, activate* | Public |
 | `GET /api/users/me`, `POST /api/users/logout` | Bearer `{{access_token}}` |
 
