@@ -55,6 +55,8 @@ resilience4j:
         wait-duration: 500ms
         enable-exponential-backoff: true
         exponential-backoff-multiplier: 2
+        ignore-exceptions:
+          - dev.kaiwen.bikes.exception.BusinessException
 
 app:
   google-maps:

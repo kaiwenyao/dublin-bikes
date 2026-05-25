@@ -13,15 +13,36 @@ public final class JourneyRequestNormalizer {
     }
 
     private static void validate(JourneyRequestDTO dto) {
-        boolean addressMode = hasText(dto.startAddress()) && hasText(dto.endAddress());
-        boolean coordMode = dto.start() != null && dto.end() != null;
-        if (addressMode == coordMode) {
+        boolean hasStartAddress = hasText(dto.startAddress());
+        boolean hasEndAddress = hasText(dto.endAddress());
+        boolean hasStartCoord = dto.start() != null;
+        boolean hasEndCoord = dto.end() != null;
+
+        boolean anyAddress = hasStartAddress || hasEndAddress;
+        boolean anyCoord = hasStartCoord || hasEndCoord;
+
+        if (anyAddress && anyCoord) {
             throw new BusinessException(
                     ApiCodes.VALIDATION_ERROR,
-                    "provide either start_address/end_address or start/end coordinates",
+                    "provide either start_address/end_address or start/end coordinates, not both",
                     400);
         }
-        if (coordMode) {
+        if (anyAddress) {
+            if (!hasStartAddress || !hasEndAddress) {
+                throw new BusinessException(
+                        ApiCodes.VALIDATION_ERROR,
+                        "start_address and end_address are both required",
+                        400);
+            }
+            return;
+        }
+        if (anyCoord) {
+            if (!hasStartCoord || !hasEndCoord) {
+                throw new BusinessException(
+                        ApiCodes.VALIDATION_ERROR,
+                        "start and end coordinates are both required",
+                        400);
+            }
             if (dto.start().lat() == null
                     || dto.start().lon() == null
                     || dto.end().lat() == null
@@ -29,7 +50,12 @@ public final class JourneyRequestNormalizer {
                 throw new BusinessException(
                         ApiCodes.VALIDATION_ERROR, "start and end coordinates are required", 400);
             }
+            return;
         }
+        throw new BusinessException(
+                ApiCodes.VALIDATION_ERROR,
+                "provide either start_address/end_address or start/end coordinates",
+                400);
     }
 
     private static boolean hasText(String value) {
