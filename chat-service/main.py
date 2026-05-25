@@ -6,7 +6,9 @@ import json
 import logging
 from functools import lru_cache
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
+import psycopg
 from fastapi import FastAPI, HTTPException
 from langchain_community.chat_message_histories import SQLChatMessageHistory
 from langchain_core.messages import AIMessage, HumanMessage
@@ -85,10 +87,50 @@ def _require_runtime() -> Settings:
     return settings
 
 
+def _psycopg_conninfo(db_url: str) -> str:
+    """Normalize CHAT_DB_URL for psycopg.connect (libpq), not SQLAlchemy.
+
+    LangChain accepts postgresql+psycopg://…; psycopg rejects the +driver suffix.
+    Also repairs a bare ?sslmode query flag (no value), which Supabase URLs sometimes have.
+    """
+    parsed = urlparse(db_url)
+    scheme = parsed.scheme.split("+", 1)[0]  # postgresql+psycopg -> postgresql
+    query = parse_qsl(parsed.query, keep_blank_values=True)
+    fixed_query: list[tuple[str, str]] = []
+    for key, value in query:
+        if key == "sslmode" and value == "":
+            fixed_query.append((key, "require"))
+        else:
+            fixed_query.append((key, value))
+    if parsed.query == "sslmode":
+        fixed_query = [("sslmode", "require")]
+    return urlunparse(parsed._replace(scheme=scheme, query=urlencode(fixed_query)))
+
+
+def _ensure_session_row(session_id: str, user_id: int, settings: Settings) -> None:
+    """Upsert sessions row so message_store FK (V2 migration) is satisfied.
+
+    Spring normally owns this table; when testing chat-service directly (e.g. Postman),
+    we still need a parent session row before LangChain writes to message_store.
+    """
+    with psycopg.connect(_psycopg_conninfo(settings.chat_db_url)) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO sessions (id, user_id, title, created_at, updated_at)
+                VALUES (%s, %s, NULL, NOW() AT TIME ZONE 'UTC', NOW() AT TIME ZONE 'UTC')
+                ON CONFLICT (id) DO UPDATE
+                    SET updated_at = NOW() AT TIME ZONE 'UTC'
+                """,
+                (session_id, user_id),
+            )
+        conn.commit()
+
+
 def _memory(session_id: str, settings: Settings) -> SQLChatMessageHistory:
     return SQLChatMessageHistory(
         session_id=session_id,
-        connection_string=settings.chat_db_url,
+        connection=settings.chat_db_url,
     )
 
 
@@ -123,6 +165,7 @@ def health() -> HealthReply:
 @app.post("/chat", response_model=ChatReply)
 def chat(req: ChatRequest) -> ChatReply:
     settings = _require_runtime()
+    _ensure_session_row(req.session_id, req.user_id, settings)
     mem = _memory(req.session_id, settings)
     mem.add_message(HumanMessage(content=req.message))
     ai = _llm(sync=True).invoke(mem.messages)
@@ -133,6 +176,7 @@ def chat(req: ChatRequest) -> ChatReply:
 @app.post("/chat/stream")
 async def chat_stream(req: ChatRequest) -> EventSourceResponse:
     settings = _require_runtime()
+    _ensure_session_row(req.session_id, req.user_id, settings)
     mem = _memory(req.session_id, settings)
     mem.add_message(HumanMessage(content=req.message))
     history = mem.messages

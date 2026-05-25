@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 from fastapi.testclient import TestClient
 
-from main import ChatRequest, HealthReply, app
+from main import ChatRequest, HealthReply, _psycopg_conninfo, app
 
 client = TestClient(app)
 
@@ -21,6 +21,11 @@ def test_health_returns_ok():
 def test_chat_request_accepts_valid_message():
     req = ChatRequest(session_id="sess-1", user_id=42, message="Hello")
     assert req.message == "Hello"
+
+
+def test_psycopg_conninfo_strips_sqlalchemy_driver_and_fixes_sslmode():
+    url = "postgresql+psycopg://user:pass@host:5432/db?sslmode"
+    assert _psycopg_conninfo(url) == "postgresql://user:pass@host:5432/db?sslmode=require"
 
 
 def test_chat_request_rejects_message_over_max_length():
