@@ -18,11 +18,18 @@ class ChatServiceConfigIntegrationTest {
     private RestClient chatServiceRestClient;
 
     @Autowired
+    private RestClient chatServiceTitleRestClient;
+
+    @Autowired
     private ChatServiceProperties chatServiceProperties;
 
     @Test
     void chatServiceRestClient_isConfiguredFromProperties() {
         assertThat(chatServiceRestClient).isNotNull();
+        assertThat(chatServiceTitleRestClient).isNotNull();
         assertThat(chatServiceProperties.baseUrl()).isEqualTo("http://localhost:8002");
+        assertThat(chatServiceProperties.connectTimeoutMs()).isEqualTo(1000);
+        assertThat(chatServiceProperties.readTimeoutMs()).isEqualTo(5000);
+        assertThat(chatServiceProperties.titleTimeoutMs()).isEqualTo(3000);
     }
 }
