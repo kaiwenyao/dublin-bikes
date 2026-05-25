@@ -11,6 +11,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -22,6 +24,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
+    private static final Logger log = LoggerFactory.getLogger(JwtAuthenticationFilter.class);
+
     private final JwtService jwtService;
     private final UserRepository userRepository;
 
@@ -30,6 +34,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
         String token = resolveToken(request);
+        log.debug(
+                "Authorization header present for {} {}: {}",
+                request.getMethod(),
+                request.getRequestURI(),
+                token != null);
         if (token != null) {
             try {
                 JwtTokenClaims claims = jwtService.parseAccessToken(token);
@@ -41,6 +50,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                                 List.of(new SimpleGrantedAuthority("ROLE_USER")));
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             } catch (AuthException ex) {
+                log.debug(
+                        "Token parsing failed for {} {}: {}",
+                        request.getMethod(),
+                        request.getRequestURI(),
+                        ex.getMessage());
                 SecurityContextHolder.clearContext();
             }
         }

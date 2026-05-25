@@ -45,8 +45,8 @@ function openStream(
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${token}`,
-    token,
   }
+  console.log('[chatStream] token prefix:', token.slice(0, 8))
   return new Promise((resolve, reject) => {
     let completed = false
     let receivedContent = false
