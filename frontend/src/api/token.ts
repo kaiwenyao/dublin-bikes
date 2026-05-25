@@ -71,10 +71,14 @@ export const setAuthTokens = (
       : getTokenStorage() ?? (typeof window !== 'undefined' ? window.localStorage : null)
   if (!storage) return
 
+  const existingRefresh = getRefreshToken()
+  const refreshToStore: string | null =
+    refreshToken !== undefined && isValidToken(refreshToken) ? refreshToken : existingRefresh
+
   clearAuthTokens()
   storage.setItem(ACCESS_TOKEN_KEY, accessToken)
-  if (refreshToken) {
-    storage.setItem(REFRESH_TOKEN_KEY, refreshToken)
+  if (isValidToken(refreshToStore)) {
+    storage.setItem(REFRESH_TOKEN_KEY, refreshToStore)
   }
 }
 
