@@ -8,6 +8,7 @@ PostgreSQL schema for the Dublin Bikes backend. Applied automatically on Spring 
 |---------|------|--------|
 | V1 | `V1__baseline.sql` | Full baseline including `message_store` (LangChain, Python-owned) |
 | V2 | `V2__message_store_session_fk.sql` | FK `message_store.session_id` → `sessions.id`, orphan cleanup |
+| V3 | `V3__message_store_message_text.sql` | `message_store.message` JSONB → TEXT (LangChain default; fixes `varchar/jsonb` insert type mismatch) |
 
 ## V2 production checklist (required before deploy)
 
