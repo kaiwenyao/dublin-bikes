@@ -23,4 +23,19 @@ class DistanceUtilsTest {
         double km = DistanceUtils.haversineKm(0.0, 0.0, 0.0, 180.0);
         assertThat(km).isBetween(19900.0, 20100.0);
     }
+
+    @Test
+    void estimatedDurationSeconds_walking_usesFiveKmh() {
+        assertThat(DistanceUtils.estimatedDurationSeconds(1.0, "walking")).isEqualTo(720);
+    }
+
+    @Test
+    void estimatedDurationSeconds_bicycling_usesFourteenKmh() {
+        assertThat(DistanceUtils.estimatedDurationSeconds(1.0, "bicycling")).isEqualTo(257);
+    }
+
+    @Test
+    void estimatedDurationSeconds_zeroDistance_returnsZero() {
+        assertThat(DistanceUtils.estimatedDurationSeconds(0.0, "walking")).isZero();
+    }
 }
