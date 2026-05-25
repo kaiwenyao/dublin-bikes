@@ -192,7 +192,7 @@ docker build --secret id=env,src=.env -t react-app .
 # 运行容器
 docker run -d -p 80:80 \
   -e BACKEND_HOST=您的后端主机 \
-  -e BACKEND_PORT=5000 \
+  -e BACKEND_PORT=8080 \
   react-app
 ```
 
@@ -201,7 +201,7 @@ docker run -d -p 80:80 \
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `BACKEND_HOST` | `flask-app` | 后端服务主机名 |
-| `BACKEND_PORT` | `5000` | 后端服务端口 |
+| `BACKEND_PORT` | `8080` | 后端服务端口 |
 
 Nginx 配置使用 `envsubst` 在运行时动态代理 API 请求到后端服务。
 

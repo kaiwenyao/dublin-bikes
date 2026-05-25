@@ -126,7 +126,7 @@ public class DublinBikesApplication { ... }
 
 | 层级 | 职责 |
 |---|---|
-| **Python `chat-service`** | LangChain + 通义 Qwen、`message_store` 读写、同步对话与 SSE 流 |
+| **Python `chat-service`** | LangChain + DeepSeek、`message_store` 读写、同步对话与 SSE 流 |
 | **Spring Boot** | JWT 鉴权、`sessions` 表 ACL、HTTP/SSE **代理**到 Python |
 | **`ChatServiceConfig`** | 注册 `RestClient` Bean，`baseUrl` 来自 `app.chat-service` |
 

@@ -192,7 +192,7 @@ docker build --secret id=env,src=.env -t react-app .
 # Run the container
 docker run -d -p 80:80 \
   -e BACKEND_HOST=your-backend-host \
-  -e BACKEND_PORT=5000 \
+  -e BACKEND_PORT=8080 \
   react-app
 ```
 
@@ -201,7 +201,7 @@ docker run -d -p 80:80 \
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BACKEND_HOST` | `flask-app` | Backend service hostname |
-| `BACKEND_PORT` | `5000` | Backend service port |
+| `BACKEND_PORT` | `8080` | Backend service port |
 
 The Nginx configuration uses `envsubst` to dynamically proxy API requests to the backend service at runtime.
 
