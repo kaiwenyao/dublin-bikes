@@ -42,9 +42,11 @@ def get_settings() -> Settings:
 
 
 class ChatRequest(BaseModel):
+    # user_id is forwarded by Spring after JWT auth; this service does not verify
+    # session ownership — see README "Trust boundaries".
     session_id: str
     user_id: int
-    message: str
+    message: str = Field(..., max_length=4000)
 
 
 class ChatReply(BaseModel):
@@ -90,7 +92,7 @@ def _memory(session_id: str, settings: Settings) -> SQLChatMessageHistory:
     )
 
 
-@lru_cache
+@lru_cache  # API key rotation requires container restart (cached client holds old key).
 def _llm(sync: bool = True) -> ChatOpenAI:
     settings = _require_runtime()
     return ChatOpenAI(
@@ -138,6 +140,7 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
 
     async def event_generator():
         chunks: list[str] = []
+        persisted = False
         try:
             async for event in llm_stream.astream(history):
                 piece = event.content if isinstance(event.content, str) else str(event.content)
@@ -146,10 +149,14 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
                 chunks.append(piece)
                 yield {"data": json.dumps({"content": piece})}
             mem.add_message(AIMessage(content="".join(chunks)))
+            persisted = True
             yield {"data": "[DONE]"}
         except Exception:
             logger.exception("chat stream failed for session_id=%s", req.session_id)
             raise
+        finally:
+            if chunks and not persisted:
+                mem.add_message(AIMessage(content="".join(chunks)))
 
     return EventSourceResponse(event_generator())
 

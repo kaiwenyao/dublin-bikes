@@ -50,7 +50,7 @@
    - HTML 邮件 + 异步线程池发送
 
 6. **LLM 对话助手**
-   - 阿里云通义 Qwen（兼容 OpenAI 协议）
+   - DeepSeek（OpenAI 兼容协议）
    - LangChain 记忆 (`SQLChatMessageHistory` → PostgreSQL `message_store` 表)
    - 普通 + SSE 流式响应、会话列表、会话历史、自动生成会话标题
    - **重构后**：LangChain 逻辑保留在 **独立 Python 微服务（`chat-service`）**，Spring Boot 仅做 JWT 鉴权、`sessions` 表 ACL 维护、HTTP/SSE 代理
@@ -134,7 +134,7 @@
 |---|---|---|
 | OpenWeatherMap OneCall | 天气数据（**数据已由独立爬虫写入数据库**，应用只读） | 仅 JPA 查询 |
 | Google Maps Distance Matrix / Geocoding | 行程规划 | `RestClient` + 自实现 retry / Resilience4j |
-| 阿里云通义 Qwen（兼容 OpenAI 协议） | LLM 对话 | **独立 Python `chat-service`（LangChain）**，Spring 通过 `RestClient` + SSE 代理 |
+| DeepSeek（OpenAI 兼容协议） | LLM 对话 | **独立 Python `chat-service`（LangChain）**，Spring 通过 `RestClient` + SSE 代理 |
 | SMTP（Flask-Mail） | 邮件 | `spring-boot-starter-mail` (JavaMailSender) |
 | PostgreSQL | 持久化 | `spring-boot-starter-data-jpa` + `postgresql` driver |
 | 训练好的 scikit-learn `.pkl` 模型 | 自行车预测 | 见 `04-modules.md` §6（推荐：将 ML 模型独立为 Python FastAPI 微服务，Spring Boot 通过 HTTP 调用；备选：导出为 ONNX 用 Java 加载） |
@@ -170,7 +170,7 @@
 | **S2** | JPA 实体 + 站点 / 天气模块 | Station / Availability / WeatherForecast 实体、对应 Repository、Service、Controller、单元测试 |
 | **S3** | 用户系统 + JWT + 邮件 | User 实体、注册/激活/登录/refresh/logout、`token_version` 黑名单、HTML 邮件模板、异步发送 |
 | **S4** | 行程规划 | Google Maps Client、Distance Matrix 批量、最小总时长搜索算法（端口现有 Python 逻辑）、Resilience4j 重试 |
-| **S5** | LLM 对话 | 部署独立 Python `chat-service`（LangChain + Qwen + `message_store` 读写）；Spring `ChatController` + `ChatService` 做 JWT 鉴权、`sessions` 表 ACL、SSE 代理；自动标题生成由 Spring 调用 `chat-service /title` |
+| **S5** | LLM 对话 | 部署独立 Python `chat-service`（LangChain + DeepSeek + `message_store` 读写）；Spring `ChatController` + `ChatService` 做 JWT 鉴权、`sessions` 表 ACL、SSE 代理；自动标题生成由 Spring 调用 `chat-service /title` |
 | **S6** | ML 预测服务 + 集成 | 部署独立 Python 预测微服务；Spring 端 `PredictionService` 通过 `RestClient` 调用、完整 E2E 联调、Postman/HTTPie 验证 |
 
 每个 Sprint 的细分任务、依赖和验收标准见 `05-testing-and-roadmap.md` §B。
