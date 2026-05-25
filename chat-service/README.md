@@ -37,6 +37,19 @@ curl http://localhost:8002/health
 
 Spring default upstream: `http://localhost:8002` (`app.chat-service.base-url` in backend config).
 
+## Trust boundaries
+
+This service **does not** validate that `user_id` owns `session_id`. Spring Boot is expected to authenticate the caller (JWT), enforce `sessions` table ACL, and only forward requests for sessions that belong to that user. Treat direct calls to this service (bypassing Spring) as trusted-network only.
+
+## Tests
+
+```bash
+cd chat-service
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+pytest
+```
+
 ## Docker
 
 ```bash

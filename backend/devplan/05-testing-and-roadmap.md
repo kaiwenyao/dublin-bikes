@@ -123,7 +123,7 @@
 > Spring 端不再实现 LLM 调用与 `message_store` 读写；这两块由独立 Python `chat-service` 完成。Spring 仅做鉴权、`sessions` 表 ACL、SSE 透传。
 
 任务：
-1. **Python `chat-service`** 工程化：FastAPI + LangChain（`SQLChatMessageHistory`）+ Qwen（OpenAI 兼容），端点 `/chat`、`/chat/stream`、`/chat/title`、`/sessions/{id}/messages`、`/health`。Dockerfile + `docker-compose` 服务定义。详见 `04-modules.md` §5.7。
+1. **Python `chat-service`** 工程化：FastAPI + LangChain（`SQLChatMessageHistory`）+ DeepSeek（OpenAI 兼容），端点 `/chat`、`/chat/stream`、`/chat/title`、`/sessions/{id}/messages`、`/health`。Dockerfile + `docker-compose` 服务定义。详见 `04-modules.md` §5.7。
 2. Spring `ChatSession` Entity + `ChatSessionRepository`（仅 `sessions` 表，不映射 `message_store`）。
 3. Spring `ChatServiceClient`（`RestClient` 同步 + `WebClient`/JDK `HttpClient` SSE 转发）+ `ChatServiceProperties`。
 4. Spring `ChatService.generateChatResponse` 同步 + `generateChatStream` SSE 透传。
