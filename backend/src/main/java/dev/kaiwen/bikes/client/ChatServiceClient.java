@@ -17,6 +17,7 @@ import org.springframework.web.client.RestClient;
 public class ChatServiceClient {
 
     private final RestClient chatServiceRestClient;
+    private final RestClient chatServiceTitleRestClient;
 
     public ChatReplyVO chat(String sessionId, int userId, String message) {
         return chatServiceRestClient
@@ -30,7 +31,7 @@ public class ChatServiceClient {
 
     public String title(String message) {
         record TitleResp(String title) {}
-        TitleResp resp = chatServiceRestClient
+        TitleResp resp = chatServiceTitleRestClient
                 .post()
                 .uri("/chat/title")
                 .contentType(MediaType.APPLICATION_JSON)

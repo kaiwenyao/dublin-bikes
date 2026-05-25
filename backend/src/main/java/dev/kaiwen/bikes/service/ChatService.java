@@ -47,7 +47,6 @@ public class ChatService {
     private final ChatServiceProperties properties;
     private final ObjectMapper objectMapper;
 
-    @Transactional
     public ChatReplyVO chat(String message, String chatId) {
         int userId = currentUserId();
         String sessionId = generateSessionId(userId, chatId);
