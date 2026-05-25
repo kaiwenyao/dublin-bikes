@@ -197,7 +197,7 @@ public record JourneyResponseDTO(
 }}
 ```
 `route_info` / `search_context` 为前端 `JourneyPlanResponse` 的固定结构；不要返回扁平 `data.start_station`，否则地图页无法解构路线信息。
-若无可行路线：`{"code":404,"msg":"no available route","data":null}` HTTP 404。
+若无可行路线：`{"code":40401,"msg":"no available route","data":null}` HTTP 404。地址无法解析：`{"code":40402,"msg":"address could not be resolved","data":null}` HTTP 404。
 
 ### 3.4 算法（端口 Flask 现有实现，**不要重新设计**）
 

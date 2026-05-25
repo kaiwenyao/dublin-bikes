@@ -61,12 +61,43 @@
 
 ## 2. 当前后端实现状态
 
-- ✅ 主包 `dev.kaiwen.bikes` 已确立；启动类已启用 `@ConfigurationPropertiesScan`、`@EntityScan`、`@EnableJpaRepositories`。
-- ✅ `pom.xml` 已包含 Spring Web、Spring Data JPA、Bean Validation、PostgreSQL driver、Flyway、MapStruct、Lombok、H2 test 依赖。
-- ✅ `application.yaml` 已包含 Jackson `SNAKE_CASE`、JPA `validate`、Flyway 和默认 `dev` profile；`application-dev.yaml` / `application-prod.yaml` 负责 PostgreSQL 数据源和 `app.chat-service`。
-- ✅ 已实现的包：`model`、`repository`、`mapper`、`dto`、`config`、`exception`。
-- ⏳ 尚未实现的包：`controller`、`service`、`security`、`mail`、Google Maps / prediction / chat 代理客户端等业务编排层。
-- ✅ DTO 与 Entity 已分离；当前仅有 `StationMapper` 和 `UserMapper`，Weather/Journey/Chat 的业务 Mapper 尚未落地。
+> 对照 `backend/src/main/java` 与测试目录更新（2026-05-25）。路线图阶段见 §5；细分任务见 `05-testing-and-roadmap.md` §B。
+
+### 2.1 工程基础（S1，已基本完成）
+
+- ✅ 主包 `dev.kaiwen.bikes`；启动类已启用 `@ConfigurationPropertiesScan`、`@EntityScan`、`@EnableJpaRepositories`（排除默认 `UserDetailsServiceAutoConfiguration`）。
+- ✅ `pom.xml`：Web、JPA、Validation、Security、Mail、Thymeleaf、Actuator、JJWT、PostgreSQL、Flyway、MapStruct、Lombok；测试用 H2 + `spring-security-test`。
+- ✅ `application.yaml`：Jackson `SNAKE_CASE`、`jpa.ddl-auto=validate`、Flyway、`server.port` 默认 5000；`/actuator/health` 已暴露。
+- ✅ `application-dev.yaml` / `application-prod.yaml` / `application-dev.yaml.example`：PostgreSQL 数据源；`app.jwt`、`app.verification`、`app.chat-service`（示例模板中已列出 Mail SMTP）。
+- ✅ 统一响应与异常：`ApiResponse`、`ApiCodes`（含 `STATION_NOT_FOUND`）、`GlobalExceptionHandler`、`BusinessException` / `AuthException`。
+- ✅ Flyway `V1__baseline.sql`（PostgreSQL DDL）；实体与表由 Hibernate `validate` 校验。
+- ⏳ Jacoco 覆盖率门禁、CI pipeline、全量 Newman Postman 回归尚未落地。
+
+### 2.2 已落地业务（S2 + S3）
+
+| 模块 | Controller / Service | 端点 | 测试 |
+|---|---|---|---|
+| **Station** | `StationController`、`StationService` | `GET /api/stations/`、`/{n}/availability`、`/status` | `StationControllerTest`、`StationServiceTest`、`AvailabilityRepositoryTest` |
+| **Weather** | `WeatherController`、`WeatherService` | `GET /api/weather` | `WeatherControllerTest`、`WeatherServiceTest` |
+| **User** | `UserController`、`UserService`、`JwtService`、`MailService` | 注册 / 验证码 / 双通道激活 / 登录 / refresh / logout / `GET /me` | `UserControllerTest`、`UserServiceTest`、`JwtServiceTest`、`MailServiceTest`、`UserAuthIntegrationTest` |
+| **Security** | `SecurityConfig`、`JwtAuthenticationFilter`、`JwtAuthenticationEntryPoint` | JWT access + refresh、`token_version` 登出失效；公开站点/天气/行程与用户注册登录路径 | 覆盖于 User 相关测试 |
+
+- ✅ MapStruct：`StationMapper`、`UserMapper`、`WeatherMapper`。
+- ✅ 数据层：全部 JPA 实体与 Repository（`Station`、`Availability`、`WeatherForecast`、`User`、`ChatSession`）；`message_store` 仍由 Python `chat-service` 独占，Spring 不映射。
+
+### 2.3 待实现（S5–S6，下一步为 S5）
+
+| 模块 | 现状 | 说明 |
+|---|---|---|
+| **Chat（S5）** | ⏳ `ChatSession` 实体、`ChatSessionRepository`、`ChatServiceProperties`、`ChatServiceConfig`（`RestClient` bean） | 需独立 Python `chat-service` + Spring 鉴权 / `sessions` ACL / SSE 代理；`SecurityConfig` 当前对 `/api/chat/**` 为 `denyAll` |
+| **Prediction（S6）** | ⏳ `PredictionPointVO`；站点 Controller 未暴露 `GET /{n}/prediction` | 需独立 Python 预测微服务 + `PredictionClient` / `PredictionService` |
+
+- ✅ Resilience4j `@Retry`（`gmaps`）+ `app.google-maps` 配置已接入 Journey。
+- ⏳ Prediction 的 `@ConfigurationProperties` 与运行时配置尚未落地（参考 `03-configuration-and-dependencies.md` §4）。
+
+### 2.4 建议的下一迭代
+
+按 `05-testing-and-roadmap.md`，**Sprint S5 — Chat** 为下一主线（独立 Python `chat-service` + Spring SSE 代理）。S6 预测服务在 S5 之后；S4 Journey 可用 Postman 对比 Flask 做最终验收（需 `GOOGLE_MAPS_API_KEY`）。
 
 ---
 

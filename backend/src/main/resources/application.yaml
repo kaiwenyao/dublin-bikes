@@ -46,3 +46,21 @@ logging:
   level:
     dev.kaiwen.bikes: INFO
     org.hibernate.SQL: WARN
+
+resilience4j:
+  retry:
+    instances:
+      gmaps:
+        max-attempts: 3
+        wait-duration: 500ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        ignore-exceptions:
+          - dev.kaiwen.bikes.exception.BusinessException
+
+app:
+  google-maps:
+    api-key: ${GOOGLE_MAPS_API_KEY:}
+    connect-timeout-ms: 5000
+    read-timeout-ms: 10000
+    max-retries: 2
