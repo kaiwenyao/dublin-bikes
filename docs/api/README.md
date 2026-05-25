@@ -19,8 +19,10 @@ Postman workspace **Dublin Bikes** contains:
 
 | Route | Auth |
 |-------|------|
-| `GET /api/stations/**`, `GET /api/weather` | Public |
+| `GET /api/stations/**`, `GET /api/weather`, `POST /api/journey/plan` | Public |
 | `POST /api/users/register`, login, refresh, activate* | Public |
 | `GET /api/users/me`, `POST /api/users/logout` | Bearer `{{access_token}}` |
 
 Response envelope: `{ "code": 0, "msg": "ok", "data": ... }`
+
+Business error codes use `HTTP_status * 100 + seq` (e.g. `40001` validation, `40401` no route, `40402` address not resolved). HTTP status is carried separately on the response line.

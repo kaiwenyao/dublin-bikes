@@ -26,4 +26,17 @@ public interface AvailabilityRepository extends JpaRepository<Availability, Inte
                             + "ON a.number = latest.number AND a.timestamp = latest.max_ts",
             nativeQuery = true)
     List<Availability> findLatestPerStation();
+    @Query(
+            value =
+                    "SELECT a.* FROM availability a "
+                            + "INNER JOIN ( "
+                            + "    SELECT number, MAX(timestamp) AS max_ts "
+                            + "    FROM availability "
+                            + "    WHERE timestamp >= :since "
+                            + "    GROUP BY number "
+                            + ") latest "
+                            + "ON a.number = latest.number AND a.timestamp = latest.max_ts",
+            nativeQuery = true)
+    List<Availability> findLatestPerStationSince(@Param("since") LocalDateTime since);
+
 }
