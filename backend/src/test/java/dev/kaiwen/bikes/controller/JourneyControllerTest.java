@@ -98,7 +98,7 @@ class JourneyControllerTest {
                                 .content(
                                         "{\"start\":{\"lat\":53.34,\"lon\":-6.26},\"end\":{\"lat\":53.33,\"lon\":-6.25}}"))
                 .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.code").value(404))
+                .andExpect(jsonPath("$.code").value(ApiCodes.NO_AVAILABLE_ROUTE))
                 .andExpect(jsonPath("$.msg").value("no available route"));
     }
 }

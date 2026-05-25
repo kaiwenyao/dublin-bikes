@@ -27,7 +27,7 @@ class GoogleMapsClientTest {
 
     @Test
     void parseGeocodeResponse_zeroResults_returns404() throws Exception {
-        assertGeocodeError("{\"status\":\"ZERO_RESULTS\"}", ApiCodes.NO_AVAILABLE_ROUTE, 404);
+        assertGeocodeError("{\"status\":\"ZERO_RESULTS\"}", ApiCodes.ADDRESS_NOT_RESOLVED, 404);
     }
 
     @Test

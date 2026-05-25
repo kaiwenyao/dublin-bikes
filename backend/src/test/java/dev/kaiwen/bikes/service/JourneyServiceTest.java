@@ -45,7 +45,7 @@ class JourneyServiceTest {
 
     @Test
     void plan_whenNoEligibleStations_throwsNoRoute() {
-        when(availabilityRepository.findLatestPerStation()).thenReturn(List.of());
+        when(availabilityRepository.findLatestPerStationSince(any())).thenReturn(List.of());
 
         JourneyRequestDTO request =
                 new JourneyRequestDTO(null, null, new GeoPointDTO(53.34, -6.26), new GeoPointDTO(53.33, -6.25));
@@ -72,7 +72,7 @@ class JourneyServiceTest {
 
         when(stationRepository.findAllByOrderByNumberAsc())
                 .thenReturn(List.of(startStation, endStation, sameStation));
-        when(availabilityRepository.findLatestPerStation())
+        when(availabilityRepository.findLatestPerStationSince(any()))
                 .thenReturn(List.of(startAvail, endAvail, sameAvail));
 
         when(googleMapsClient.distanceMatrix(anyList(), anyList(), eq("walking")))
@@ -103,6 +103,78 @@ class JourneyServiceTest {
         assertThat(response.routeInfo().totalDuration()).isEqualTo(340);
         assertThat(response.searchContext().startResolved().lat()).isEqualTo(53.34);
         assertThat(response.routeInfo().startStation().coords().lat()).isCloseTo(53.35, within(1e-4));
+    }
+
+
+    @Test
+    void plan_whenOnlySameStationPair_throwsNoRoute() {
+        Station only = station(7, 53.340, -6.260);
+        Availability avail = availability(only, 3, 5);
+
+        when(stationRepository.findAllByOrderByNumberAsc()).thenReturn(List.of(only));
+        when(availabilityRepository.findLatestPerStationSince(any()))
+                .thenReturn(List.of(avail));
+
+        when(googleMapsClient.distanceMatrix(anyList(), anyList(), eq("walking")))
+                .thenReturn(new int[][] {{60}});
+        when(googleMapsClient.distanceMatrix(anyList(), anyList(), eq("bicycling")))
+                .thenReturn(new int[][] {{GoogleMapsClient.UNREACHABLE_DURATION}});
+
+        JourneyRequestDTO request =
+                new JourneyRequestDTO(null, null, new GeoPointDTO(53.34, -6.26), new GeoPointDTO(53.33, -6.25));
+
+        assertThatThrownBy(() -> journeyService.plan(request))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(
+                        ex -> {
+                            BusinessException be = (BusinessException) ex;
+                            assertThat(be.getCode()).isEqualTo(ApiCodes.NO_AVAILABLE_ROUTE);
+                            assertThat(be.getStatus()).isEqualTo(404);
+                        });
+    }
+
+    @Test
+    void plan_whenAllCycleLegsUnreachable_throwsNoRoute() {
+        Station startStation = station(1, 53.340, -6.260);
+        Station endStation = station(2, 53.345, -6.255);
+        Availability startAvail = availability(startStation, 5, 10);
+        Availability endAvail = availability(endStation, 2, 8);
+
+        when(stationRepository.findAllByOrderByNumberAsc()).thenReturn(List.of(startStation, endStation));
+        when(availabilityRepository.findLatestPerStationSince(any()))
+                .thenReturn(List.of(startAvail, endAvail));
+
+        when(googleMapsClient.distanceMatrix(anyList(), anyList(), eq("walking")))
+                .thenAnswer(
+                        invocation -> {
+                            List<LatLon> origins = invocation.getArgument(0);
+                            List<LatLon> destinations = invocation.getArgument(1);
+                            if (origins.size() == 1 && destinations.size() == 2) {
+                                return new int[][] {{100, 120}};
+                            }
+                            if (origins.size() == 2 && destinations.size() == 1) {
+                                return new int[][] {{80}, {90}};
+                            }
+                            return new int[0][0];
+                        });
+
+        when(googleMapsClient.distanceMatrix(anyList(), anyList(), eq("bicycling")))
+                .thenReturn(
+                        new int[][] {
+                            {GoogleMapsClient.UNREACHABLE_DURATION, GoogleMapsClient.UNREACHABLE_DURATION},
+                            {GoogleMapsClient.UNREACHABLE_DURATION, GoogleMapsClient.UNREACHABLE_DURATION}
+                        });
+
+        JourneyRequestDTO request =
+                new JourneyRequestDTO(null, null, new GeoPointDTO(53.34, -6.26), new GeoPointDTO(53.33, -6.25));
+
+        assertThatThrownBy(() -> journeyService.plan(request))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(
+                        ex -> {
+                            BusinessException be = (BusinessException) ex;
+                            assertThat(be.getCode()).isEqualTo(ApiCodes.NO_AVAILABLE_ROUTE);
+                        });
     }
 
     private static Station station(int number, double lat, double lon) {
