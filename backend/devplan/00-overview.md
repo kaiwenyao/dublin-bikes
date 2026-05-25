@@ -67,7 +67,7 @@
 
 - ✅ 主包 `dev.kaiwen.bikes`；启动类已启用 `@ConfigurationPropertiesScan`、`@EntityScan`、`@EnableJpaRepositories`（排除默认 `UserDetailsServiceAutoConfiguration`）。
 - ✅ `pom.xml`：Web、JPA、Validation、Security、Mail、Thymeleaf、Actuator、JJWT、PostgreSQL、Flyway、MapStruct、Lombok；测试用 H2 + `spring-security-test`。
-- ✅ `application.yaml`：Jackson `SNAKE_CASE`、`jpa.ddl-auto=validate`、Flyway、`server.port` 默认 5000；`/actuator/health` 已暴露。
+- ✅ `application.yaml`：Jackson `SNAKE_CASE`、`jpa.ddl-auto=validate`、Flyway、`server.port` 默认 8080；`/actuator/health` 已暴露。
 - ✅ `application-dev.yaml` / `application-prod.yaml` / `application-dev.yaml.example`：PostgreSQL 数据源；`app.jwt`、`app.verification`、`app.chat-service`（示例模板中已列出 Mail SMTP）。
 - ✅ 统一响应与异常：`ApiResponse`、`ApiCodes`（含 `STATION_NOT_FOUND`）、`GlobalExceptionHandler`、`BusinessException` / `AuthException`。
 - ✅ Flyway `V1__baseline.sql`（PostgreSQL DDL）；实体与表由 Hibernate `validate` 校验。

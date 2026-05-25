@@ -308,7 +308,7 @@ spring:
       thread-name-prefix: email-send-
 
 server:
-  port: ${SERVER_PORT:5000}    # 与 Flask 默认端口一致，便于零改前端联调；macOS AirPlay 占用时可用 SERVER_PORT 覆盖
+  port: ${SERVER_PORT:8080}    # 默认 8080（规避 macOS AirPlay 占用 5000）；可用 SERVER_PORT 覆盖
   servlet:
     encoding:
       charset: UTF-8

@@ -52,7 +52,7 @@ spec:
         string(name: 'DOCKER_NETWORK', defaultValue: 'dublin-bikes-network', description: 'Docker network for deployment')
         string(name: 'HOST_HTTP_PORT', defaultValue: '5000', description: 'Host port published to nginx (container port 80)')
         string(name: 'BACKEND_HOST', defaultValue: 'dublin-bikes-backend', description: 'Backend container DNS name in Docker network')
-        string(name: 'BACKEND_PORT', defaultValue: '5000', description: 'Backend container port')
+        string(name: 'BACKEND_PORT', defaultValue: '8080', description: 'Backend container port')
         string(name: 'SSH_KEY_CREDENTIALS_ID', defaultValue: 'server-ssh-key', description: 'Jenkins SSH key credential ID')
     }
 
