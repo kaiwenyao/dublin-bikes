@@ -159,7 +159,7 @@
 | R4 | 旧 JWT logout 失效要求"立刻" | 短期内大量旧 token 涌入数据库压力 | 每次校验 `verifyAccessToken` 都 reload user → 加 user 缓存（Caffeine, TTL=30s） |
 | R5 | Google Maps quota 用尽 | journey 端点失败 | Resilience4j circuit breaker + fallback 返回 `code:500` 友好提示 |
 | R6 | Flask snake_case 字段 vs Spring 默认 camelCase | 前端直接挂掉 | 全局 Jackson `SNAKE_CASE`；DTO 用 camelCase 字段名（Java 习惯），序列化自动转换 |
-| R7 | 端口 5000 在 macOS 上被 AirPlay 占用 | 本地启动失败 | 开发文档建议改为 8080 或关闭 AirPlay 接收器；CI 用容器无冲突 |
+| R7 | 端口 5000 在 macOS 上被 AirPlay 占用 | 本地启动失败 | 默认端口已改为 **8080**（`application.yaml`）；仍可用 `SERVER_PORT` 覆盖；CI 用容器无冲突 |
 | R8 | Flask `dt.weekday()` 取值 0..6（周一=0）；Java `DayOfWeek.getValue()` 是 1..7（周一=1） | 预测特征错位 → 模型输出全错 | 文档已注明 `getValue() - 1`；写专门单测断言映射 |
 | R9 | Pydantic `UserVO.created_at: str | None` 由 Python `isoformat()` 给出（无时区），Java 端默认 ISO-8601 带 `T` 也无时区 | 字段值表面一致 | 用集成测试 byte-for-byte 对比 |
 | R10 | 主类 / 主配置 "暂不能改" 的硬约束 | S1 启动时缺 `@EnableJpaRepositories` 等 | 把这些 annotation 集中在 `config/JpaConfig` 等 `@Configuration` 类，避免改主类即可生效 |
@@ -183,9 +183,9 @@
 - 决策：FastAPI 子服务。
 - 理由：训练栈是 sklearn + pandas，导出 ONNX 风险高；副作用是部署多一个进程。给出 ONNX 备选方案以备未来切换。
 
-**ADR-004 服务端口保持 5000**
-- 决策：默认 5000，可由 `SERVER_PORT` 环境变量覆盖。
-- 理由：前端、Postman 集合现状写死 `localhost:5000`；零改前端是迁移成功的标志。
+**ADR-004 服务端口默认 8080**
+- 决策：默认 **8080**，可由 `SERVER_PORT` 环境变量覆盖。
+- 理由：macOS 上 5000 常被 AirPlay Receiver 占用导致本地 `spring-boot:run` 失败；前端 Vite 代理、`BACKEND_PORT`、Postman `baseUrl` 已对齐 `localhost:8080`。
 
 **ADR-005 `is_active` 列默认 true、注册时强制 false**
 - 决策：复刻 Flask 现状，不"修正"为列默认 false。

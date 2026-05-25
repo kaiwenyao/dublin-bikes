@@ -7,7 +7,7 @@ Postman workspace **Dublin Bikes** contains:
 
 ## Quick start
 
-1. Start backend: `cd backend && mvn spring-boot:run` (port **5000**)
+1. Start backend: `cd backend && mvn spring-boot:run` (port **8080**)
 2. (Optional) Start chat-service: `cd chat-service && uvicorn main:app --host 0.0.0.0 --port 8002` with `.env` (`CHAT_DB_URL`, `DEEPSEEK_API_KEY`)
 3. In Postman, select workspace **Dublin Bikes** and environment **Dublin Bikes - Local**
 4. Run public endpoints (Stations, Weather) or auth flow:
