@@ -93,6 +93,16 @@ public class ChatService {
 
         client.sendAsync(request, HttpResponse.BodyHandlers.ofLines())
                 .thenAccept(response -> {
+                    int status = response.statusCode();
+                    if (status < 200 || status >= 300) {
+                        String body = String.join("\n", response.body().toList());
+                        log.error("chat stream upstream returned status {}: {}", status, body);
+                        emitter.completeWithError(new BusinessException(
+                                ApiCodes.GENERIC_ERROR,
+                                "chat service unavailable",
+                                mapUpstreamStatus(status)));
+                        return;
+                    }
                     response.body().forEach(line -> {
                         if (line.startsWith("data: ")) {
                             String data = line.substring(6);
@@ -184,6 +194,16 @@ public class ChatService {
                 session.getTitle(),
                 session.getCreatedAt() != null ? session.getCreatedAt().format(ISO_FMT) : null,
                 session.getUpdatedAt() != null ? session.getUpdatedAt().format(ISO_FMT) : null);
+    }
+
+    private static int mapUpstreamStatus(int upstreamStatus) {
+        if (upstreamStatus >= 500) {
+            return 502;
+        }
+        if (upstreamStatus >= 400) {
+            return upstreamStatus;
+        }
+        return 500;
     }
 
     private static int currentUserId() {
