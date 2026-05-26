@@ -111,12 +111,11 @@ Create a `.env` file in the project root by copying the example:
 cp .env.example .env
 ```
 
-Then fill in your API keys:
+Then set your Google Maps API key:
 
 | Variable | Description |
 |----------|-------------|
-| `VITE_PUBLIC_API_KEY` | Your public API key |
-| `VITE_GOOGLE_MAPS_API_KEY` | Google Maps API key (required for maps features) |
+| `VITE_GOOGLE_MAPS_API_KEY` | Google Maps API key (required for `/maps`) |
 
 > **Note:** Vite only exposes variables prefixed with `VITE_` to frontend code. Do not put truly secret keys here — they are visible in the browser bundle.
 
