@@ -131,9 +131,9 @@ const listTokenPairCandidates = (): TokenPairCandidate[] =>
     .sort(compareTokenPairCandidates)
 
 /**
- * Pick the best token pair for this tab: honor the last explicit login/refresh storage
- * when it can provide a valid access token, otherwise use a same-subject non-expired
- * access token before refreshing the preferred storage.
+ * Pick the best token pair for this tab. If this tab explicitly selected a storage
+ * and that storage has a refresh token, keep using it: refresh that pair instead of
+ * borrowing a different storage's access token and mixing token generations.
  */
 const readActiveTokenPair = (): {
   access: string | null
@@ -148,9 +148,9 @@ const readActiveTokenPair = (): {
   const preferredStorage = getPreferredStorage()
   const activeSubject = getActiveSubject()
   const preferred = preferredStorage
-    ? candidates.find((c) => c.storage === preferredStorage && !c.accessExpired)
+    ? candidates.find((c) => c.storage === preferredStorage)
     : undefined
-  if (preferred) {
+  if (preferred && !preferred.accessExpired) {
     return {
       access: preferred.access,
       refresh: preferred.refresh,
@@ -158,10 +158,15 @@ const readActiveTokenPair = (): {
     }
   }
 
-  const preferredWithRefresh = preferredStorage
-    ? candidates.find((c) => c.storage === preferredStorage && c.refresh != null)
-    : undefined
-  const preferredSubject = preferredWithRefresh?.subject ?? activeSubject
+  if (preferred?.refresh) {
+    return {
+      access: null,
+      refresh: preferred.refresh,
+      storage: preferred.storage,
+    }
+  }
+
+  const preferredSubject = preferred?.subject ?? activeSubject
 
   const sameSubjectValidAccess = preferredSubject
     ? candidates.find((c) => !c.accessExpired && c.subject === preferredSubject)
@@ -176,25 +181,10 @@ const readActiveTokenPair = (): {
 
   const withValidAccess = candidates.find((c) => !c.accessExpired)
   if (withValidAccess) {
-    if (preferredWithRefresh && preferredSubject && withValidAccess.subject !== preferredSubject) {
-      return {
-        access: null,
-        refresh: preferredWithRefresh.refresh,
-        storage: preferredWithRefresh.storage,
-      }
-    }
     return {
       access: withValidAccess.access,
       refresh: withValidAccess.refresh,
       storage: withValidAccess.storage,
-    }
-  }
-
-  if (preferredWithRefresh) {
-    return {
-      access: null,
-      refresh: preferredWithRefresh.refresh,
-      storage: preferredWithRefresh.storage,
     }
   }
 
