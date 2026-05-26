@@ -35,11 +35,17 @@ const CHAT_AUTH_FAILURE_MESSAGE = 'Session expired. Please sign in again.'
 const STREAM_EMPTY_MESSAGE = 'Stream closed before any response content.'
 const isCompletionMarker = (chunk: string): boolean => chunk.trim() === '[DONE]'
 
+interface OpenStreamFlags {
+  /** Skip the in-handshake refresh — caller already refreshed once this attempt. */
+  skipRefresh?: boolean
+}
+
 function openStream(
   url: string,
   token: string,
   options: ChatStreamOptions,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  flags: OpenStreamFlags = {}
 ): Promise<void> {
   const { chat_id, message, onMessage, onDone, onError } = options
   const headers: Record<string, string> = {
@@ -73,9 +79,14 @@ function openStream(
       async onopen(response) {
         if (response.ok) return
         if (response.status === 401 || response.status === 403) {
-          // Unify 401/403 handshake failures under refresh sentinel so caller can
-          // translate both refresh-success and refresh-failed cases consistently.
-          await refreshAccessToken()
+          // Refresh at most once per chatStreamAPI invocation: the retry
+          // attempt already carries a freshly-issued token, so re-refreshing
+          // can't help and just doubles the round-trip count when the 401 is
+          // not actually about token freshness (e.g. a server-side matcher
+          // misconfig).
+          if (!flags.skipRefresh) {
+            await refreshAccessToken()
+          }
           throw new Error(RETRY_AFTER_REFRESH)
         }
         throw new Error(response.statusText || `HTTP ${response.status}`)
@@ -142,7 +153,7 @@ export async function chatStreamAPI(options: ChatStreamOptions): Promise<void> {
         throw authError
       }
       try {
-        await openStream(url, token, options, signal)
+        await openStream(url, token, options, signal, { skipRefresh: true })
         return
       } catch (retryErr) {
         if (retryErr instanceof Error && isRetryAfterRefreshError(retryErr)) {
