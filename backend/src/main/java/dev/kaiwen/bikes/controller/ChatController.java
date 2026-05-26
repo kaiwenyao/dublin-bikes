@@ -37,7 +37,8 @@ public class ChatController {
         chatService.chatStream(request.message(), request.chatId(), emitter);
         return ResponseEntity.ok()
                 .header("X-Accel-Buffering", "no")
-                .header("Cache-Control", "no-cache")
+                .header("Cache-Control", "no-cache, no-transform")
+                .header("Connection", "keep-alive")
                 .body(emitter);
     }
 
