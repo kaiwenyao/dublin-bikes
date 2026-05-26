@@ -120,6 +120,7 @@ const handleBusinessResponse = <T>(response: AxiosResponse<unknown>): AxiosRespo
  * - Other failed requests enter `failedQueue`, wait for refresh result then retry/fail uniformly.
  */
 let isRefreshing = false
+let refreshPromise: Promise<string | null> | null = null
 
 type PendingRequest = { resolve: (token: string) => void; reject: (error: Error) => void }
 const failedQueue: PendingRequest[] = []
@@ -149,7 +150,7 @@ const processQueue = (error: Error | null, token: string | null): void => {
  * Silently refresh access_token using refresh_token.
  * On failure clear local token, let upper layer handle expiration process.
  */
-const refreshAccessToken = async (): Promise<string | null> => {
+const performRefreshAccessToken = async (): Promise<string | null> => {
   const refreshToken = getRefreshToken()
   if (!refreshToken) return null
 
@@ -167,6 +168,15 @@ const refreshAccessToken = async (): Promise<string | null> => {
     clearAuthTokens()
     return null
   }
+}
+
+const refreshAccessToken = async (): Promise<string | null> => {
+  if (!refreshPromise) {
+    refreshPromise = performRefreshAccessToken().finally(() => {
+      refreshPromise = null
+    })
+  }
+  return refreshPromise
 }
 
 /**

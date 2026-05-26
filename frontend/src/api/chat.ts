@@ -1,7 +1,8 @@
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 import { API_BASE_URL } from '@/config'
 import { CHAT_ENDPOINTS } from './endpoints'
-import request, { resolveAccessToken, refreshAccessToken } from './request'
+import request, { refreshAccessToken } from './request'
+import { getAccessToken } from './token'
 
 export interface ChatStreamOptions {
   chat_id: string
@@ -35,17 +36,11 @@ const CHAT_AUTH_FAILURE_MESSAGE = 'Session expired. Please sign in again.'
 const STREAM_EMPTY_MESSAGE = 'Stream closed before any response content.'
 const isCompletionMarker = (chunk: string): boolean => chunk.trim() === '[DONE]'
 
-interface OpenStreamFlags {
-  /** Skip the in-handshake refresh — caller already refreshed once this attempt. */
-  skipRefresh?: boolean
-}
-
 function openStream(
   url: string,
   token: string,
   options: ChatStreamOptions,
-  signal?: AbortSignal,
-  flags: OpenStreamFlags = {}
+  signal?: AbortSignal
 ): Promise<void> {
   const { chat_id, message, onMessage, onDone, onError } = options
   const headers: Record<string, string> = {
@@ -79,14 +74,6 @@ function openStream(
       async onopen(response) {
         if (response.ok) return
         if (response.status === 401 || response.status === 403) {
-          // Refresh at most once per chatStreamAPI invocation: the retry
-          // attempt already carries a freshly-issued token, so re-refreshing
-          // can't help and just doubles the round-trip count when the 401 is
-          // not actually about token freshness (e.g. a server-side matcher
-          // misconfig).
-          if (!flags.skipRefresh) {
-            await refreshAccessToken()
-          }
           throw new Error(RETRY_AFTER_REFRESH)
         }
         throw new Error(response.statusText || `HTTP ${response.status}`)
@@ -129,11 +116,17 @@ function openStream(
 }
 
 /**
- * Call /api/chat/stream streaming endpoint, carry JWT (same as axios: resolve first then send, refresh and retry once on 401), callback content block by block via onMessage.
+ * Call /api/chat/stream streaming endpoint with JWT. If the first stream attempt
+ * used an existing access token and gets 401, refresh once and retry once.
  */
 export async function chatStreamAPI(options: ChatStreamOptions): Promise<void> {
   const { signal } = options
-  let token = await resolveAccessToken()
+  let refreshedBeforeFirstStream = false
+  let token = getAccessToken()
+  if (!token) {
+    token = await refreshAccessToken()
+    refreshedBeforeFirstStream = token != null
+  }
   if (!token) {
     const err = new Error('Please sign in first.')
     options.onError?.(err)
@@ -146,14 +139,19 @@ export async function chatStreamAPI(options: ChatStreamOptions): Promise<void> {
     await openStream(url, token, options, signal)
   } catch (err) {
     if (err instanceof Error && isRetryAfterRefreshError(err)) {
-      token = await resolveAccessToken()
+      if (refreshedBeforeFirstStream) {
+        const authError = new Error(CHAT_AUTH_FAILURE_MESSAGE)
+        options.onError?.(authError)
+        throw authError
+      }
+      token = await refreshAccessToken()
       if (!token) {
         const authError = new Error(CHAT_AUTH_FAILURE_MESSAGE)
         options.onError?.(authError)
         throw authError
       }
       try {
-        await openStream(url, token, options, signal, { skipRefresh: true })
+        await openStream(url, token, options, signal)
         return
       } catch (retryErr) {
         if (retryErr instanceof Error && isRetryAfterRefreshError(retryErr)) {
