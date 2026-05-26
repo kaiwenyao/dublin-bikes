@@ -111,12 +111,11 @@
 cp .env.example .env
 ```
 
-然后填写您的 API 密钥：
+然后填写 Google Maps API 密钥：
 
 | 变量 | 说明 |
 |------|------|
-| `VITE_PUBLIC_API_KEY` | 您的公共 API 密钥 |
-| `VITE_GOOGLE_MAPS_API_KEY` | Google Maps API 密钥（地图功能必需） |
+| `VITE_GOOGLE_MAPS_API_KEY` | Google Maps API 密钥（`/maps` 页面必需） |
 
 > **注意：** Vite 仅将 `VITE_` 前缀的变量暴露给前端代码。请勿在此放置真正的机密密钥，因为它们在浏览器包中可见。
 
