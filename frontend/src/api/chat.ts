@@ -14,9 +14,10 @@ export interface ChatStreamOptions {
 }
 
 export interface ChatSession {
+  id: string
   created_at: string
-  session_id: string
   title: string
+  updated_at?: string
 }
 
 export interface ChatMessageDTO {
@@ -24,9 +25,47 @@ export interface ChatMessageDTO {
   role: 'user' | 'assistant'
 }
 
-export interface ChatSessionMessages {
-  session_id: string
-  messages: ChatMessageDTO[]
+function normalizeChatRole(value: unknown): ChatMessageDTO['role'] {
+  const role = String(value ?? '').toLowerCase()
+  if (role === 'user' || role === 'human') return 'user'
+  return 'assistant'
+}
+
+function normalizeChatSession(raw: unknown): ChatSession | null {
+  if (!raw || typeof raw !== 'object') return null
+  const record = raw as Record<string, unknown>
+  const id = String(record.id ?? record.session_id ?? '').trim()
+  if (!id) return null
+  return {
+    id,
+    title: String(record.title ?? ''),
+    created_at: String(record.created_at ?? ''),
+    updated_at:
+      record.updated_at != null ? String(record.updated_at) : undefined,
+  }
+}
+
+function normalizeChatMessages(payload: unknown): ChatMessageDTO[] {
+  const rawList = Array.isArray(payload)
+    ? payload
+    : payload &&
+        typeof payload === 'object' &&
+        Array.isArray((payload as { messages?: unknown }).messages)
+      ? (payload as { messages: unknown[] }).messages
+      : []
+
+  return rawList
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null
+      const record = item as Record<string, unknown>
+      const content = String(record.content ?? '').trim()
+      if (!content) return null
+      return {
+        role: normalizeChatRole(record.role),
+        content,
+      }
+    })
+    .filter((item): item is ChatMessageDTO => item != null)
 }
 
 const RETRY_AFTER_REFRESH = 'RETRY_AFTER_REFRESH'
@@ -179,15 +218,18 @@ export async function chatStreamAPI(options: ChatStreamOptions): Promise<void> {
 }
 
 export async function getChatSessionsAPI(): Promise<ChatSession[]> {
-  const { data } = await request.get<ChatSession[]>(CHAT_ENDPOINTS.sessions)
-  return data ?? []
+  const { data } = await request.get<unknown>(CHAT_ENDPOINTS.sessions)
+  const list = Array.isArray(data) ? data : []
+  return list
+    .map(normalizeChatSession)
+    .filter((session): session is ChatSession => session != null)
 }
 
 export async function getChatSessionMessagesAPI(
   sessionId: string
-): Promise<ChatSessionMessages> {
-  const { data } = await request.get<ChatSessionMessages>(
+): Promise<ChatMessageDTO[]> {
+  const { data } = await request.get<unknown>(
     `${CHAT_ENDPOINTS.sessions}/${encodeURIComponent(sessionId)}/messages`
   )
-  return data
+  return normalizeChatMessages(data)
 }

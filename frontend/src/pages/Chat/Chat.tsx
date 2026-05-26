@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import {
   chatStreamAPI,
   type ChatSession,
+  type ChatMessageDTO,
   getChatSessionsAPI,
   getChatSessionMessagesAPI,
 } from '@/api/chat'
@@ -30,6 +31,24 @@ function createWelcomeMessage(): Message {
     ...WELCOME_MESSAGE,
     createdAt: new Date(),
   }
+}
+
+function createEmptyHistoryMessage(): Message {
+  return {
+    id: 'history-empty',
+    role: 'assistant',
+    content: 'No messages in this conversation yet.',
+    createdAt: new Date(),
+  }
+}
+
+function mapHistoryToMessages(sessionId: string, history: ChatMessageDTO[]): Message[] {
+  return history.map((m, index) => ({
+    id: `${m.role}-${index}-${sessionId}`,
+    role: m.role,
+    content: m.content,
+    createdAt: new Date(),
+  }))
 }
 
 /** Parse streaming response: each chunk from backend is {"content": "xxx"}, may end with [DONE] */
@@ -87,9 +106,9 @@ function findSessionIdByChatId(
   if (!normalizedChatId) return null
 
   const matchedSession = sessionList.find(
-    (session) => extractChatId(session.session_id) === normalizedChatId
+    (session) => extractChatId(session.id) === normalizedChatId
   )
-  return matchedSession?.session_id ?? null
+  return matchedSession?.id ?? null
 }
 
 export default function Chat() {
@@ -253,23 +272,26 @@ export default function Chat() {
   }
 
   const handleSelectSession = async (session: ChatSession) => {
+    abortRef.current?.abort()
+    clearStreamUnlockTimer()
+    setSending(false)
+    releaseSubmitLock()
+
     const requestId = historyRequestIdRef.current + 1
     historyRequestIdRef.current = requestId
-    const nextChatId = extractChatId(session.session_id)
-    setActiveSessionId(session.session_id)
+    const nextChatId = extractChatId(session.id)
+    setActiveSessionId(session.id)
     setChatId(nextChatId)
+    setMessages([])
     setLoadingHistory(true)
     try {
-      const data = await getChatSessionMessagesAPI(session.session_id)
+      const history = await getChatSessionMessagesAPI(session.id)
       if (!isMountedRef.current || requestId !== historyRequestIdRef.current) return
-      const historyMessages: Message[] = (data.messages ?? []).map((m, index) => ({
-        id: `${m.role}-${index}-${session.session_id}`,
-        role: m.role,
-        content: m.content,
-        createdAt: new Date(),
-      }))
-      pendingScrollToBottomRef.current = true
-      setMessages(historyMessages.length ? historyMessages : [createWelcomeMessage()])
+      const historyMessages = mapHistoryToMessages(session.id, history)
+      pendingScrollToBottomRef.current = historyMessages.length > 0
+      setMessages(
+        historyMessages.length > 0 ? historyMessages : [createEmptyHistoryMessage()]
+      )
     } catch (error) {
       if (!isMountedRef.current || requestId !== historyRequestIdRef.current) return
       pendingScrollToBottomRef.current = false
@@ -550,12 +572,12 @@ export default function Chat() {
               ) : (
                 <div className="space-y-2.5">
                   {sessions.map((session) => {
-                    const isActive = activeSessionId === session.session_id
+                    const isActive = activeSessionId === session.id
                     return (
                       <button
-                        key={session.session_id}
+                        key={session.id}
                         type="button"
-                        onClick={() => handleSelectSession(session)}
+                        onClick={() => void handleSelectSession(session)}
                         className={`group relative w-full cursor-pointer overflow-hidden rounded-2xl border px-3.5 py-3 text-left transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${
                           isActive
                             ? 'border-[#00A8E8]/40 bg-linear-to-br from-white via-[#00A8E8]/10 to-[#007EA7]/10 text-[#00171F] shadow-[0_16px_30px_rgba(0,168,232,0.14)] ring-1 ring-[#00A8E8]/30'
@@ -564,13 +586,13 @@ export default function Chat() {
                       >
                         {isActive && (
                           <div
-                            className="absolute top-0 right-0 h-24 w-24 translate-x-1/4 -translate-y-1/4 rounded-full bg-[#00A8E8]/20 blur-2xl"
+                            className="pointer-events-none absolute top-0 right-0 h-24 w-24 translate-x-1/4 -translate-y-1/4 rounded-full bg-[#00A8E8]/20 blur-2xl"
                             aria-hidden
                           />
                         )}
 
                         <div
-                          className={`absolute inset-y-3 left-0 w-1 rounded-r-full transition-colors ${
+                          className={`pointer-events-none absolute inset-y-3 left-0 w-1 rounded-r-full transition-colors ${
                             isActive
                               ? 'bg-[#00A8E8]'
                               : 'bg-[#00A8E8]/0 group-hover:bg-[#00A8E8]/50'
@@ -633,10 +655,10 @@ export default function Chat() {
               className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 space-y-4"
               onWheelCapture={handleChatPanelWheel}
             >
-              {loadingHistory && (
-                <p className="text-xs text-muted-foreground">Loading session messages...</p>
-              )}
-              {messages.map((msg) => {
+              {loadingHistory ? (
+                <p className="text-xs text-muted-foreground">Loading conversation...</p>
+              ) : (
+              messages.map((msg) => {
                 const isUserMessage = msg.role === 'user'
                 const isStreamingEmpty =
                   msg.role === 'assistant' &&
@@ -680,7 +702,8 @@ export default function Chat() {
                     </div>
                   </div>
                 )
-              })}
+              })
+              )}
             </div>
 
             <form
