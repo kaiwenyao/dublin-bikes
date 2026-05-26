@@ -170,6 +170,17 @@ public class ChatService {
         return chatServiceClient.history(sessionId);
     }
 
+    @Transactional
+    public void deleteSession(String sessionId) {
+        int userId = currentUserId();
+        ChatSession session = chatSessionRepository.findById(sessionId)
+                .orElseThrow(() -> new BusinessException(ApiCodes.GENERIC_ERROR, "session not found", 404));
+        if (!session.getUserId().equals(userId)) {
+            throw new BusinessException(ApiCodes.GENERIC_ERROR, "session not found", 404);
+        }
+        chatSessionRepository.deleteById(sessionId);
+    }
+
     ChatSession ensureSession(String sessionId, int userId) {
         Optional<ChatSession> existing = chatSessionRepository.findById(sessionId);
         if (existing.isPresent()) {
