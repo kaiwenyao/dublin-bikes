@@ -332,6 +332,9 @@ export default function Chat() {
       if (!isMountedRef.current) return
       setSessions((prev) => prev.filter((s) => s.id !== session.id))
       if (activeSessionId === session.id) {
+        abortRef.current?.abort()
+        clearStreamUnlockTimer()
+        finishSending()
         handleStartNewChat()
       }
       toast.success('Conversation deleted')
@@ -600,10 +603,17 @@ export default function Chat() {
                   {sessions.map((session) => {
                     const isActive = activeSessionId === session.id
                     return (
-                      <button
+                      <div
                         key={session.id}
-                        type="button"
+                        role="button"
+                        tabIndex={0}
                         onClick={() => void handleSelectSession(session)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            void handleSelectSession(session)
+                          }
+                        }}
                         className={`group relative w-full cursor-pointer overflow-hidden rounded-2xl border px-3.5 py-3 text-left transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${
                           isActive
                             ? 'border-[#00A8E8]/40 bg-linear-to-br from-white via-[#00A8E8]/10 to-[#007EA7]/10 text-[#00171F] shadow-[0_16px_30px_rgba(0,168,232,0.14)] ring-1 ring-[#00A8E8]/30'
@@ -719,7 +729,7 @@ export default function Chat() {
                             <path d="m12 5 7 7-7 7" />
                           </svg>
                         </div>
-                      </button>
+                      </div>
                     )
                   })}
                 </div>
