@@ -31,3 +31,21 @@ Response envelope (Spring): `{ "code": 0, "msg": "ok", "data": ... }`
 Chat-service returns flat JSON (e.g. `{ "chat_id", "reply" }`), no envelope.
 
 Business error codes use `HTTP_status * 100 + seq` (e.g. `40001` validation, `40401` no route, `40402` address not resolved). HTTP status is carried separately on the response line.
+
+## Chat Endpoints
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/api/chat` | Bearer | Send a message (non-streaming) |
+| `POST` | `/api/chat/stream` | Bearer | Send a message (SSE streaming) |
+| `GET`  | `/api/chat/sessions` | Bearer | List user's chat sessions |
+| `GET`  | `/api/chat/sessions/{id}/messages` | Bearer | Get messages for a session |
+| `DELETE` | `/api/chat/sessions/{id}` | Bearer | Delete a session (and its messages) |
+
+### `DELETE /api/chat/sessions/{id}`
+
+Deletes the chat session if it belongs to the authenticated user. Messages are cascade-deleted automatically.
+
+**Success:** `200 OK` — `{ "code": 0, "msg": "ok", "data": null }`
+
+**Error:** `404 Not Found` — returned for both missing sessions and sessions owned by another user (security through obscurity).

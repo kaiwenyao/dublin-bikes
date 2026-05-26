@@ -9,6 +9,7 @@ import {
 } from '@/api/chat'
 import { getAccessToken } from '@/api/token'
 import { getMeAPI } from '@/api/user'
+import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 
 type Role = 'user' | 'assistant'
@@ -122,6 +123,8 @@ export default function Chat() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null)
+  const [sessionPendingDelete, setSessionPendingDelete] = useState<ChatSession | null>(null)
+  const deleteDialogRef = useRef<HTMLDialogElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const messageListRef = useRef<HTMLDivElement>(null)
   const chatIdSuffixRef = useRef<string>('')
@@ -322,10 +325,30 @@ export default function Chat() {
     }, 0)
   }
 
-  const handleDeleteSession = async (session: ChatSession) => {
-    if (deletingSessionId) return
-    if (!confirm('Are you sure you want to delete this conversation?')) return
+  useEffect(() => {
+    const dialog = deleteDialogRef.current
+    if (!dialog) return
+    if (sessionPendingDelete) {
+      if (!dialog.open) dialog.showModal()
+    } else if (dialog.open) {
+      dialog.close()
+    }
+  }, [sessionPendingDelete])
 
+  const requestDeleteSession = (session: ChatSession) => {
+    if (deletingSessionId) return
+    setSessionPendingDelete(session)
+  }
+
+  const cancelDeleteSession = () => {
+    setSessionPendingDelete(null)
+  }
+
+  const confirmDeleteSession = async () => {
+    const session = sessionPendingDelete
+    if (!session || deletingSessionId) return
+
+    setSessionPendingDelete(null)
     setDeletingSessionId(session.id)
     try {
       await deleteChatSessionAPI(session.id)
@@ -603,23 +626,16 @@ export default function Chat() {
                   {sessions.map((session) => {
                     const isActive = activeSessionId === session.id
                     return (
-                      <div
-                        key={session.id}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => void handleSelectSession(session)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault()
-                            void handleSelectSession(session)
-                          }
-                        }}
-                        className={`group relative w-full cursor-pointer overflow-hidden rounded-2xl border px-3.5 py-3 text-left transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${
-                          isActive
-                            ? 'border-[#00A8E8]/40 bg-linear-to-br from-white via-[#00A8E8]/10 to-[#007EA7]/10 text-[#00171F] shadow-[0_16px_30px_rgba(0,168,232,0.14)] ring-1 ring-[#00A8E8]/30'
-                            : 'border-white/60 bg-white/78 text-foreground shadow-[0_8px_24px_rgba(15,23,42,0.06)] hover:-translate-y-0.5 hover:border-[#00A8E8]/30 hover:bg-white hover:shadow-[0_14px_28px_rgba(0,168,232,0.12)]'
-                        }`}
-                      >
+                      <div key={session.id} className="group relative w-full">
+                        <button
+                          type="button"
+                          onClick={() => void handleSelectSession(session)}
+                          className={`w-full cursor-pointer overflow-hidden rounded-2xl border px-3.5 py-3 pr-11 text-left transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${
+                            isActive
+                              ? 'border-[#00A8E8]/40 bg-linear-to-br from-white via-[#00A8E8]/10 to-[#007EA7]/10 text-[#00171F] shadow-[0_16px_30px_rgba(0,168,232,0.14)] ring-1 ring-[#00A8E8]/30'
+                              : 'border-white/60 bg-white/78 text-foreground shadow-[0_8px_24px_rgba(15,23,42,0.06)] hover:-translate-y-0.5 hover:border-[#00A8E8]/30 hover:bg-white hover:shadow-[0_14px_28px_rgba(0,168,232,0.12)]'
+                          }`}
+                        >
                         {isActive && (
                           <div
                             className="pointer-events-none absolute top-0 right-0 h-24 w-24 translate-x-1/4 -translate-y-1/4 rounded-full bg-[#00A8E8]/20 blur-2xl"
@@ -638,60 +654,8 @@ export default function Chat() {
 
                         <div className="flex items-start gap-3 pl-2">
                           <div className="min-w-0 flex-1">
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="line-clamp-2 text-sm font-semibold leading-5">
-                                {session.title || 'Untitled session'}
-                              </div>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  void handleDeleteSession(session)
-                                }}
-                                disabled={deletingSessionId === session.id}
-                                className={`shrink-0 rounded-lg p-1 transition-all duration-200 ${
-                                  isActive
-                                    ? 'text-red-500 hover:bg-red-50'
-                                    : 'text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-red-50'
-                                } ${deletingSessionId === session.id ? 'cursor-not-allowed opacity-40' : ''}`}
-                                title="Delete conversation"
-                              >
-                                {deletingSessionId === session.id ? (
-                                  <svg
-                                    className="h-3.5 w-3.5 animate-spin"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                  >
-                                    <circle
-                                      className="opacity-25"
-                                      cx="12"
-                                      cy="12"
-                                      r="10"
-                                      stroke="currentColor"
-                                      strokeWidth="4"
-                                    />
-                                    <path
-                                      className="opacity-75"
-                                      fill="currentColor"
-                                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                                    />
-                                  </svg>
-                                ) : (
-                                  <svg
-                                    className="h-3.5 w-3.5"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  >
-                                    <path d="M3 6h18" />
-                                    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                                  </svg>
-                                )}
-                              </button>
+                            <div className="line-clamp-2 text-sm font-semibold leading-5">
+                              {session.title || 'Untitled session'}
                             </div>
 
                             <div
@@ -729,6 +693,56 @@ export default function Chat() {
                             <path d="m12 5 7 7-7 7" />
                           </svg>
                         </div>
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Delete conversation"
+                          onClick={() => requestDeleteSession(session)}
+                          disabled={deletingSessionId != null}
+                          className={`absolute top-3 right-3 z-10 rounded-lg p-1 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${
+                            isActive
+                              ? 'text-red-500 hover:bg-red-50'
+                              : 'text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-red-50'
+                          } ${deletingSessionId === session.id ? 'cursor-not-allowed opacity-40' : ''} ${deletingSessionId != null && deletingSessionId !== session.id ? 'pointer-events-none opacity-0' : ''}`}
+                        >
+                          {deletingSessionId === session.id ? (
+                            <svg
+                              className="h-3.5 w-3.5 animate-spin"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              aria-hidden
+                            >
+                              <circle
+                                className="opacity-25"
+                                cx="12"
+                                cy="12"
+                                r="10"
+                                stroke="currentColor"
+                                strokeWidth="4"
+                              />
+                              <path
+                                className="opacity-75"
+                                fill="currentColor"
+                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                              />
+                            </svg>
+                          ) : (
+                            <svg
+                              className="h-3.5 w-3.5"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden
+                            >
+                              <path d="M3 6h18" />
+                              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                            </svg>
+                          )}
+                        </button>
                       </div>
                     )
                   })}
@@ -826,6 +840,36 @@ export default function Chat() {
           </div>
         </div>
       </div>
+
+      <dialog
+        ref={deleteDialogRef}
+        onCancel={cancelDeleteSession}
+        onClose={cancelDeleteSession}
+        className="w-[min(100%,24rem)] rounded-2xl border border-white/60 bg-white/95 p-0 text-foreground shadow-[0_24px_48px_rgba(15,23,42,0.18)] backdrop:bg-[#00171F]/40 backdrop:backdrop-blur-sm open:animate-in"
+      >
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            void confirmDeleteSession()
+          }}
+          className="p-6"
+        >
+          <h2 className="text-lg font-semibold text-foreground">Delete conversation?</h2>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            {sessionPendingDelete?.title
+              ? `"${sessionPendingDelete.title}" will be permanently removed.`
+              : 'This conversation will be permanently removed.'}
+          </p>
+          <div className="mt-6 flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={cancelDeleteSession}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="destructive">
+              Delete
+            </Button>
+          </div>
+        </form>
+      </dialog>
     </section>
   )
 }
