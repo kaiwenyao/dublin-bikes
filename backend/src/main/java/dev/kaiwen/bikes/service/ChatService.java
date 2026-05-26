@@ -12,6 +12,9 @@ import dev.kaiwen.bikes.exception.BusinessException;
 import dev.kaiwen.bikes.model.ChatSession;
 import dev.kaiwen.bikes.repository.ChatSessionRepository;
 import dev.kaiwen.bikes.security.AuthenticatedUser;
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -24,6 +27,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -78,7 +82,10 @@ public class ChatService {
             return;
         }
 
+        // Uvicorn/FastAPI over HTTP/2 drops POST bodies from java.net.http.HttpClient (422).
+        // SSE upstream also expects HTTP/1.1-style streaming.
         HttpClient client = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofMillis(properties.connectTimeoutMs()))
                 .build();
 
@@ -90,36 +97,56 @@ public class ChatService {
                 .timeout(Duration.ofMillis(properties.streamTimeoutMs()))
                 .build();
 
-        client.sendAsync(request, HttpResponse.BodyHandlers.ofLines())
+        AtomicBoolean streamStarted = new AtomicBoolean(false);
+        emitter.onError(
+                ex -> log.debug("sse client disconnected or async error (response may be committed)", ex));
+        emitter.onTimeout(() -> finishEmitter(emitter, streamStarted.get(), null));
+
+        client.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream())
                 .thenAccept(response -> {
                     int status = response.statusCode();
-                    if (status < 200 || status >= 300) {
-                        String body = String.join("\n", response.body().toList());
-                        log.error("chat stream upstream returned status {}: {}", status, body);
-                        emitter.completeWithError(new BusinessException(
-                                ApiCodes.GENERIC_ERROR,
-                                "chat service unavailable",
-                                mapUpstreamStatus(status)));
-                        return;
-                    }
-                    response.body().forEach(line -> {
-                        if (line.startsWith("data: ")) {
-                            String data = line.substring(6);
-                            try {
-                                emitter.send(SseEmitter.event().data(data));
-                            } catch (Exception e) {
-                                log.debug("sse emitter send failed (client likely disconnected)", e);
+                    try (InputStream body = response.body()) {
+                        if (status < 200 || status >= 300) {
+                            String errorBody = new String(body.readAllBytes(), StandardCharsets.UTF_8);
+                            log.error("chat stream upstream returned status {}: {}", status, errorBody);
+                            finishEmitter(
+                                    emitter,
+                                    streamStarted.get(),
+                                    new BusinessException(
+                                            ApiCodes.GENERIC_ERROR,
+                                            "chat service unavailable",
+                                            mapUpstreamStatus(status)));
+                            return;
+                        }
+                        try (BufferedReader reader =
+                                new BufferedReader(new InputStreamReader(body, StandardCharsets.UTF_8))) {
+                            String line;
+                            while ((line = reader.readLine()) != null) {
+                                String data = extractSseData(line);
+                                if (data == null) {
+                                    continue;
+                                }
+                                try {
+                                    emitter.send(SseEmitter.event().data(data));
+                                    streamStarted.set(true);
+                                } catch (Exception e) {
+                                    log.debug("sse emitter send failed (client likely disconnected)", e);
+                                    break;
+                                }
                             }
                         }
-                    });
-                    emitter.complete();
-                    if (needsTitle) {
-                        chatTitleGenerator.generate(sessionId, message);
+                        finishEmitter(emitter, streamStarted.get(), null);
+                        if (needsTitle && streamStarted.get()) {
+                            chatTitleGenerator.generate(sessionId, message);
+                        }
+                    } catch (Exception e) {
+                        log.error("chat stream relay failed", e);
+                        finishEmitter(emitter, streamStarted.get(), streamStarted.get() ? null : e);
                     }
                 })
                 .exceptionally(ex -> {
                     log.error("chat stream failed", ex);
-                    emitter.completeWithError(ex);
+                    finishEmitter(emitter, streamStarted.get(), streamStarted.get() ? null : ex);
                     return null;
                 });
     }
@@ -193,6 +220,33 @@ public class ChatService {
                 session.getTitle(),
                 session.getCreatedAt() != null ? session.getCreatedAt().format(ISO_FMT) : null,
                 session.getUpdatedAt() != null ? session.getUpdatedAt().format(ISO_FMT) : null);
+    }
+
+    /**
+     * After SSE bytes are flushed, avoid completeWithError — it triggers /error dispatch while the
+     * response is committed and Spring Security cannot write an access-denied body.
+     */
+    private static void finishEmitter(SseEmitter emitter, boolean streamStarted, Throwable error) {
+        try {
+            if (!streamStarted && error != null) {
+                emitter.completeWithError(error);
+            } else {
+                emitter.complete();
+            }
+        } catch (Exception closeEx) {
+            log.debug("sse emitter close failed (client likely disconnected)", closeEx);
+        }
+    }
+
+    private static String extractSseData(String line) {
+        if (line == null || !line.startsWith("data:")) {
+            return null;
+        }
+        int colon = line.indexOf(':');
+        if (colon < 0 || colon + 1 >= line.length()) {
+            return null;
+        }
+        return line.substring(colon + 1).trim();
     }
 
     private static int mapUpstreamStatus(int upstreamStatus) {

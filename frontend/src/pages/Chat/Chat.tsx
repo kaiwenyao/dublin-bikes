@@ -108,6 +108,7 @@ export default function Chat() {
   const historyRequestIdRef = useRef(0)
   const pendingScrollToBottomRef = useRef(false)
   const submitLockRef = useRef(false)
+  const streamUnlockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isMountedRef = useRef(true)
 
   const handleChatPanelWheel = (e: React.WheelEvent<HTMLDivElement>) => {
@@ -214,6 +215,7 @@ export default function Chat() {
       abortRef.current?.abort()
       abortRef.current = null
       submitLockRef.current = false
+      setSending(false)
     }
   }, [])
 
@@ -228,10 +230,25 @@ export default function Chat() {
     abortRef.current = null
   }
 
-  const finishSending = () => {
-    if (isMountedRef.current) {
-      setSending(false)
+  const clearStreamUnlockTimer = () => {
+    if (streamUnlockTimerRef.current) {
+      clearTimeout(streamUnlockTimerRef.current)
+      streamUnlockTimerRef.current = null
     }
+  }
+
+  const scheduleStreamUnlock = () => {
+    clearStreamUnlockTimer()
+    streamUnlockTimerRef.current = setTimeout(() => {
+      if (submitLockRef.current) {
+        finishSending()
+      }
+    }, 2000)
+  }
+
+  const finishSending = () => {
+    clearStreamUnlockTimer()
+    setSending(false)
     releaseSubmitLock()
   }
 
@@ -327,6 +344,11 @@ export default function Chat() {
         signal: controller.signal,
         onMessage(chunk) {
           if (controller.signal.aborted) return
+          const trimmed = chunk.trim()
+          if (trimmed === '[DONE]' || trimmed === '"[DONE]"') {
+            finishSending()
+            return
+          }
           const part = parseStreamChunk(chunk)
           if (!part) return
           setMessages((prev) =>
@@ -334,6 +356,7 @@ export default function Chat() {
               m.id === assistantId ? { ...m, content: m.content + part } : m
             )
           )
+          scheduleStreamUnlock()
           if (document.visibilityState === 'visible') {
             setTimeout(() => {
               const el = messageListRef.current
@@ -342,9 +365,9 @@ export default function Chat() {
           }
         },
         onDone() {
+          finishSending()
           if (controller.signal.aborted) return
           void loadSessions({ silent: true, activeChatId: resolvedChatId })
-          finishSending()
         },
         onError(err) {
           if (controller.signal.aborted || isAbortLikeError(err)) {
@@ -358,15 +381,21 @@ export default function Chat() {
                 : m
             )
           )
-          finishSending()
           toast.error(err.message)
         },
       })
     } catch (err) {
-      if (controller.signal.aborted || isAbortLikeError(err)) {
-        finishSending()
-        return
+      if (!controller.signal.aborted && !isAbortLikeError(err)) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId
+              ? { ...m, content: `[Request failed] ${err instanceof Error ? err.message : 'Unknown error'}` }
+              : m
+          )
+        )
+        toast.error(err instanceof Error ? err.message : 'Request failed')
       }
+    } finally {
       finishSending()
     }
   }
@@ -598,13 +627,11 @@ export default function Chat() {
             </div>
           </aside>
 
-          <div
-            className="glass-card flex-1 min-h-0 flex flex-col overflow-hidden"
-            onWheelCapture={handleChatPanelWheel}
-          >
+          <div className="glass-card flex-1 min-h-0 flex flex-col overflow-hidden">
             <div
               ref={messageListRef}
               className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 space-y-4"
+              onWheelCapture={handleChatPanelWheel}
             >
               {loadingHistory && (
                 <p className="text-xs text-muted-foreground">Loading session messages...</p>

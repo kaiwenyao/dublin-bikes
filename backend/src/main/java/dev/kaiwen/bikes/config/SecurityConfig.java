@@ -4,6 +4,7 @@ import static org.springframework.security.web.util.matcher.AntPathRequestMatche
 
 import dev.kaiwen.bikes.security.JwtAuthenticationEntryPoint;
 import dev.kaiwen.bikes.security.JwtAuthenticationFilter;
+import jakarta.servlet.DispatcherType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -40,7 +41,12 @@ public class SecurityConfig {
                 // `Accept: text/event-stream` and got 401 even with a valid JWT.
                 .authorizeHttpRequests(
                         auth ->
-                                auth.requestMatchers(antMatcher("/actuator/health"))
+                                // SSE responses finish through async/error redispatches after bytes may be committed.
+                                auth.dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR)
+                                        .permitAll()
+                                        .requestMatchers(antMatcher("/error"))
+                                        .permitAll()
+                                        .requestMatchers(antMatcher("/actuator/health"))
                                         .permitAll()
                                         .requestMatchers(antMatcher(HttpMethod.GET, "/api/stations/**"))
                                         .permitAll()

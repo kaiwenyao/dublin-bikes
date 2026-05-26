@@ -34,7 +34,10 @@ const isRetryAfterRefreshError = (error: Error): boolean =>
   error.message === RETRY_AFTER_REFRESH
 const CHAT_AUTH_FAILURE_MESSAGE = 'Session expired. Please sign in again.'
 const STREAM_EMPTY_MESSAGE = 'Stream closed before any response content.'
-const isCompletionMarker = (chunk: string): boolean => chunk.trim() === '[DONE]'
+const isCompletionMarker = (chunk: string): boolean => {
+  const normalized = chunk.trim()
+  return normalized === '[DONE]' || normalized === '"[DONE]"'
+}
 
 function openStream(
   url: string,
@@ -51,6 +54,7 @@ function openStream(
     let completed = false
     let receivedContent = false
     let settled = false
+    let doneNotified = false
 
     const resolveOnce = () => {
       if (settled) return
@@ -63,6 +67,13 @@ function openStream(
       settled = true
       if (notify) onError?.(error)
       reject(error)
+    }
+
+    const notifyDoneOnce = () => {
+      if (doneNotified) return
+      doneNotified = true
+      onDone?.()
+      resolveOnce()
     }
 
     fetchEventSource(url, {
@@ -83,6 +94,7 @@ function openStream(
         if (isCompletionMarker(ev.data)) {
           completed = true
           onMessage(ev.data)
+          notifyDoneOnce()
           return
         }
         receivedContent = true
@@ -93,7 +105,7 @@ function openStream(
           rejectOnce(new Error(STREAM_EMPTY_MESSAGE))
           return
         }
-        onDone?.()
+        notifyDoneOnce()
         resolveOnce()
       },
       onerror(err) {
