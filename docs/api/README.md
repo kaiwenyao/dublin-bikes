@@ -13,8 +13,9 @@ Postman workspace **Dublin Bikes** contains:
 4. Run public endpoints (Stations, Weather) or auth flow:
    - `Users → Session → Login` (saves tokens)
    - `Users → Profile → Get Current User`
-5. **Chat Service** folder uses `{{chatServiceUrl}}` (default `http://localhost:8002`); **Health** works without keys
-6. **Collection Runner:** run entire collection; Login should run before protected routes
+5. **Chat (API)** folder uses Spring `{{baseUrl}}/api/chat/**` with JWT (run Login first)
+6. **Chat Service** folder uses `{{chatServiceUrl}}` (default `http://localhost:8002`) for direct microservice testing; **Health** works without keys
+7. **Collection Runner:** run entire collection; Login should run before protected routes
 
 ## Auth
 
@@ -22,8 +23,8 @@ Postman workspace **Dublin Bikes** contains:
 |-------|------|
 | `GET /api/stations/**`, `GET /api/weather`, `POST /api/journey/plan` | Public |
 | `POST /api/users/register`, login, refresh, activate* | Public |
-| `GET /api/users/me`, `POST /api/users/logout` | Bearer `{{access_token}}` |
-| Chat Service on port 8002 | None (internal); Spring `/api/chat/**` will use JWT when shipped |
+| `GET /api/users/me`, `POST /api/users/logout`, `/api/chat/**` | Bearer `{{access_token}}` |
+| Chat Service on port 8002 (direct) | None (internal); use **Chat (API)** for client-style testing |
 
 Response envelope (Spring): `{ "code": 0, "msg": "ok", "data": ... }`
 
