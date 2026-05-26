@@ -229,6 +229,50 @@ class ChatServiceTest {
     }
 
     @Test
+    void deleteSession_validSession_deletesRow() {
+        ChatSession session = session("user_1_chat_default", 1);
+        when(chatSessionRepository.findById("user_1_chat_default"))
+                .thenReturn(Optional.of(session));
+
+        chatService.deleteSession("user_1_chat_default");
+
+        verify(chatSessionRepository).deleteById("user_1_chat_default");
+    }
+
+    @Test
+    void deleteSession_otherUsersSession_throws404() {
+        ChatSession session = session("user_2_chat_default", 2);
+        when(chatSessionRepository.findById("user_2_chat_default"))
+                .thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> chatService.deleteSession("user_2_chat_default"))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(
+                        ex -> {
+                            BusinessException be = (BusinessException) ex;
+                            assertThat(be.getCode()).isEqualTo(ApiCodes.GENERIC_ERROR);
+                            assertThat(be.getStatus()).isEqualTo(404);
+                        });
+        verify(chatSessionRepository, never()).deleteById(any());
+    }
+
+    @Test
+    void deleteSession_missingSession_throws404() {
+        when(chatSessionRepository.findById("user_1_chat_missing"))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> chatService.deleteSession("user_1_chat_missing"))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(
+                        ex -> {
+                            BusinessException be = (BusinessException) ex;
+                            assertThat(be.getCode()).isEqualTo(ApiCodes.GENERIC_ERROR);
+                            assertThat(be.getStatus()).isEqualTo(404);
+                        });
+        verify(chatSessionRepository, never()).deleteById(any());
+    }
+
+    @Test
     void currentUserId_noAuthentication_throwsAuthException() {
         SecurityContextHolder.clearContext();
 

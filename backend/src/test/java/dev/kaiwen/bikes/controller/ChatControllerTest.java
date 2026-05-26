@@ -4,8 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -87,7 +90,7 @@ class ChatControllerTest {
         mockMvc.perform(asyncDispatch(mvcResult))
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-Accel-Buffering", "no"))
-                .andExpect(header().string("Cache-Control", "no-cache"))
+                .andExpect(header().string("Cache-Control", "no-cache, no-transform"))
                 .andExpect(content().contentType(MediaType.TEXT_EVENT_STREAM_VALUE))
                 .andExpect(result -> {
                     String body = result.getResponse().getContentAsString();
@@ -134,6 +137,28 @@ class ChatControllerTest {
                 .thenThrow(new BusinessException(ApiCodes.GENERIC_ERROR, "session not found", 404));
 
         mockMvc.perform(get("/api/chat/sessions/unknown/messages"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value(ApiCodes.GENERIC_ERROR))
+                .andExpect(jsonPath("$.msg").value("session not found"));
+    }
+
+    @Test
+    void deleteSession_returnsOkEnvelope() throws Exception {
+        doNothing().when(chatService).deleteSession("user_1_chat_default");
+
+        mockMvc.perform(delete("/api/chat/sessions/user_1_chat_default"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(ApiCodes.SUCCESS))
+                .andExpect(jsonPath("$.msg").value("ok"));
+    }
+
+    @Test
+    void deleteSession_whenNotFound_returns404() throws Exception {
+        doThrow(new BusinessException(ApiCodes.GENERIC_ERROR, "session not found", 404))
+                .when(chatService)
+                .deleteSession("unknown");
+
+        mockMvc.perform(delete("/api/chat/sessions/unknown"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value(ApiCodes.GENERIC_ERROR))
                 .andExpect(jsonPath("$.msg").value("session not found"));
