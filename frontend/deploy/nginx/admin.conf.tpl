@@ -14,6 +14,24 @@ server {
         add_header Cache-Control "public, immutable";
     }
 
+    location = /api/chat/stream {
+        resolver 127.0.0.11 ipv6=off valid=30s;
+        resolver_timeout 5s;
+        set $backend "${BACKEND_HOST}:${BACKEND_PORT}";
+        proxy_pass http://$backend;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_request_buffering off;
+        gzip off;
+        proxy_read_timeout 3600s;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+    }
+
     location /api/ {
         resolver 127.0.0.11 ipv6=off valid=30s;
         resolver_timeout 5s;
