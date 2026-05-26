@@ -1,5 +1,7 @@
 package dev.kaiwen.bikes.config;
 
+import static org.springframework.security.web.util.matcher.AntPathRequestMatcher.antMatcher;
+
 import dev.kaiwen.bikes.security.JwtAuthenticationEntryPoint;
 import dev.kaiwen.bikes.security.JwtAuthenticationFilter;
 import lombok.RequiredArgsConstructor;
@@ -31,35 +33,40 @@ public class SecurityConfig {
                         session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .exceptionHandling(
                         exceptions -> exceptions.authenticationEntryPoint(authenticationEntryPoint))
+                // antMatcher() forces path-only matching. Spring Security 6's default
+                // MvcRequestMatcher additionally negotiates on Accept / Content-Type, which
+                // makes any request whose Accept does not match a handler's `produces` skip
+                // every rule and fall through to denyAll() — e.g. fetchEventSource sends
+                // `Accept: text/event-stream` and got 401 even with a valid JWT.
                 .authorizeHttpRequests(
                         auth ->
-                                auth.requestMatchers("/actuator/health")
+                                auth.requestMatchers(antMatcher("/actuator/health"))
                                         .permitAll()
-                                        .requestMatchers(HttpMethod.GET, "/api/stations/**")
+                                        .requestMatchers(antMatcher(HttpMethod.GET, "/api/stations/**"))
                                         .permitAll()
-                                        .requestMatchers(HttpMethod.GET, "/api/weather")
+                                        .requestMatchers(antMatcher(HttpMethod.GET, "/api/weather"))
                                         .permitAll()
-                                        .requestMatchers(HttpMethod.POST, "/api/journey/**")
+                                        .requestMatchers(antMatcher(HttpMethod.POST, "/api/journey/**"))
                                         .permitAll()
-                                        .requestMatchers(HttpMethod.POST, "/api/users/register")
-                                        .permitAll()
-                                        .requestMatchers(
-                                                HttpMethod.POST, "/api/users/send-verification-code")
-                                        .permitAll()
-                                        .requestMatchers(HttpMethod.POST, "/api/users/activate")
+                                        .requestMatchers(antMatcher(HttpMethod.POST, "/api/users/register"))
                                         .permitAll()
                                         .requestMatchers(
-                                                HttpMethod.POST, "/api/users/activate-by-token")
+                                                antMatcher(HttpMethod.POST, "/api/users/send-verification-code"))
                                         .permitAll()
-                                        .requestMatchers(HttpMethod.POST, "/api/users/login")
+                                        .requestMatchers(antMatcher(HttpMethod.POST, "/api/users/activate"))
                                         .permitAll()
-                                        .requestMatchers(HttpMethod.POST, "/api/users/refresh")
+                                        .requestMatchers(
+                                                antMatcher(HttpMethod.POST, "/api/users/activate-by-token"))
                                         .permitAll()
-                                        .requestMatchers(HttpMethod.GET, "/api/users/me")
+                                        .requestMatchers(antMatcher(HttpMethod.POST, "/api/users/login"))
+                                        .permitAll()
+                                        .requestMatchers(antMatcher(HttpMethod.POST, "/api/users/refresh"))
+                                        .permitAll()
+                                        .requestMatchers(antMatcher(HttpMethod.GET, "/api/users/me"))
                                         .authenticated()
-                                        .requestMatchers(HttpMethod.POST, "/api/users/logout")
+                                        .requestMatchers(antMatcher(HttpMethod.POST, "/api/users/logout"))
                                         .authenticated()
-                                        .requestMatchers("/api/chat/**")
+                                        .requestMatchers(antMatcher("/api/chat/**"))
                                         .authenticated()
                                         .anyRequest()
                                         .denyAll())
