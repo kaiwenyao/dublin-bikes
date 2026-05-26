@@ -845,7 +845,7 @@ export default function Chat() {
         ref={deleteDialogRef}
         onCancel={cancelDeleteSession}
         onClose={cancelDeleteSession}
-        className="w-[min(100%,24rem)] rounded-2xl border border-white/60 bg-white/95 p-0 text-foreground shadow-[0_24px_48px_rgba(15,23,42,0.18)] backdrop:bg-[#00171F]/40 backdrop:backdrop-blur-sm open:animate-in"
+        className="fixed top-1/2 left-1/2 m-0 w-[min(calc(100vw-2rem),24rem)] max-h-[calc(100vh-2rem)] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-white/60 bg-white/95 p-0 text-foreground shadow-[0_24px_48px_rgba(15,23,42,0.18)] backdrop:bg-[#00171F]/40 backdrop:backdrop-blur-sm open:animate-in"
       >
         <form
           onSubmit={(e) => {
