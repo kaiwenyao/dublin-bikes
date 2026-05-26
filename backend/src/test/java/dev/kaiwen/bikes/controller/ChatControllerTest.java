@@ -90,7 +90,7 @@ class ChatControllerTest {
         mockMvc.perform(asyncDispatch(mvcResult))
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-Accel-Buffering", "no"))
-                .andExpect(header().string("Cache-Control", "no-cache"))
+                .andExpect(header().string("Cache-Control", "no-cache, no-transform"))
                 .andExpect(content().contentType(MediaType.TEXT_EVENT_STREAM_VALUE))
                 .andExpect(result -> {
                     String body = result.getResponse().getContentAsString();
