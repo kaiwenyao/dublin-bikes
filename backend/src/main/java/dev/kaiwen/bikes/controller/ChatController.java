@@ -11,6 +11,7 @@ import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -50,5 +51,11 @@ public class ChatController {
     @GetMapping("/sessions/{id}/messages")
     public ApiResponse<List<ChatMessageVO>> getSessionMessages(@PathVariable("id") String sessionId) {
         return ApiResponse.ok(chatService.getSessionMessages(sessionId));
+    }
+
+    @DeleteMapping("/sessions/{id}")
+    public ApiResponse<Void> deleteSession(@PathVariable("id") String sessionId) {
+        chatService.deleteSession(sessionId);
+        return ApiResponse.ok(null);
     }
 }

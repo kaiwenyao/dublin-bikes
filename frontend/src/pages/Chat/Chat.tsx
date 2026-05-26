@@ -5,6 +5,7 @@ import {
   type ChatMessageDTO,
   getChatSessionsAPI,
   getChatSessionMessagesAPI,
+  deleteChatSessionAPI,
 } from '@/api/chat'
 import { getAccessToken } from '@/api/token'
 import { getMeAPI } from '@/api/user'
@@ -120,6 +121,7 @@ export default function Chat() {
   const [sessionsLoading, setSessionsLoading] = useState(false)
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [loadingHistory, setLoadingHistory] = useState(false)
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const messageListRef = useRef<HTMLDivElement>(null)
   const chatIdSuffixRef = useRef<string>('')
@@ -318,6 +320,30 @@ export default function Chat() {
       const el = messageListRef.current
       if (el) el.scrollTop = 0
     }, 0)
+  }
+
+  const handleDeleteSession = async (session: ChatSession) => {
+    if (deletingSessionId) return
+    if (!confirm('Are you sure you want to delete this conversation?')) return
+
+    setDeletingSessionId(session.id)
+    try {
+      await deleteChatSessionAPI(session.id)
+      if (!isMountedRef.current) return
+      setSessions((prev) => prev.filter((s) => s.id !== session.id))
+      if (activeSessionId === session.id) {
+        handleStartNewChat()
+      }
+      toast.success('Conversation deleted')
+    } catch (error) {
+      if (!isMountedRef.current) return
+      const message = error instanceof Error ? error.message : 'Failed to delete conversation.'
+      toast.error(message)
+    } finally {
+      if (isMountedRef.current) {
+        setDeletingSessionId(null)
+      }
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -602,8 +628,60 @@ export default function Chat() {
 
                         <div className="flex items-start gap-3 pl-2">
                           <div className="min-w-0 flex-1">
-                            <div className="line-clamp-2 text-sm font-semibold leading-5">
-                              {session.title || 'Untitled session'}
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="line-clamp-2 text-sm font-semibold leading-5">
+                                {session.title || 'Untitled session'}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  void handleDeleteSession(session)
+                                }}
+                                disabled={deletingSessionId === session.id}
+                                className={`shrink-0 rounded-lg p-1 transition-all duration-200 ${
+                                  isActive
+                                    ? 'text-red-500 hover:bg-red-50'
+                                    : 'text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-red-50'
+                                } ${deletingSessionId === session.id ? 'cursor-not-allowed opacity-40' : ''}`}
+                                title="Delete conversation"
+                              >
+                                {deletingSessionId === session.id ? (
+                                  <svg
+                                    className="h-3.5 w-3.5 animate-spin"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                  >
+                                    <circle
+                                      className="opacity-25"
+                                      cx="12"
+                                      cy="12"
+                                      r="10"
+                                      stroke="currentColor"
+                                      strokeWidth="4"
+                                    />
+                                    <path
+                                      className="opacity-75"
+                                      fill="currentColor"
+                                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                                    />
+                                  </svg>
+                                ) : (
+                                  <svg
+                                    className="h-3.5 w-3.5"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="2"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  >
+                                    <path d="M3 6h18" />
+                                    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                                  </svg>
+                                )}
+                              </button>
                             </div>
 
                             <div

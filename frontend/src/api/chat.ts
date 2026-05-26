@@ -4,6 +4,10 @@ import { CHAT_ENDPOINTS } from './endpoints'
 import request, { refreshAccessToken } from './request'
 import { getAccessToken } from './token'
 
+export async function deleteChatSessionAPI(sessionId: string): Promise<void> {
+  await request.delete(`${CHAT_ENDPOINTS.sessions}/${encodeURIComponent(sessionId)}`)
+}
+
 export interface ChatStreamOptions {
   chat_id: string
   message: string
