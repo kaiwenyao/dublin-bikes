@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" role="img" aria-label="Dublin Bikes">
+  <circle cx="9" cy="21" r="5.5" stroke="#007EA7" stroke-width="2"/>
+  <circle cx="23" cy="21" r="5.5" stroke="#007EA7" stroke-width="2"/>
+  <path d="M9 21L15 11L19 15L23 21" stroke="#007EA7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M15 11L19 8M15 11H12" stroke="#007EA7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="19" cy="8" r="1.5" fill="#00A8E8"/>
+</svg>
