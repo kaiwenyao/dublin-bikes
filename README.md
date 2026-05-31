@@ -1,5 +1,7 @@
 # 🚲 Dublin Bikes
 
+**English** · [简体中文](./README.zh-CN.md)
+
 A full-stack Dublin Bikes (公共自行车) platform: live station availability, weather, journey planning, ML-based bike-availability prediction, user accounts, and an LLM chat assistant. Monorepo with a Spring Boot backend, a React frontend, and two Python microservices.
 
 ## 📋 Table of Contents
