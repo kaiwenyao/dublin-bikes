@@ -63,7 +63,6 @@ application-local.yml
 **/application-dev.yml
 **/application-prod.yaml
 **/application-prod.yml
-!backend/src/main/resources/application-prod.yaml
 **/application-local.yaml
 **/application-local.yml
 
