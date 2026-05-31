@@ -58,6 +58,7 @@ spec:
         DOCKER_CREDENTIALS_ID = 'docker-hub-credentials'
         SERVER_HOST_CREDENTIALS_ID = 'hel-host'
         ENV_FILE_CREDENTIALS_ID = 'dublin-bikes-prediction-service.env'
+        HF_TOKEN_CREDENTIALS_ID = 'huggingface-token'
     }
 
     stages {
@@ -153,7 +154,8 @@ spec:
                                 string(credentialsId: env.SERVER_HOST_CREDENTIALS_ID, variable: 'SERVER_HOST'),
                                 sshUserPrivateKey(credentialsId: params.SSH_KEY_CREDENTIALS_ID, keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER'),
                                 usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID, usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS'),
-                                file(credentialsId: env.ENV_FILE_CREDENTIALS_ID, variable: 'ENV_FILE')
+                                file(credentialsId: env.ENV_FILE_CREDENTIALS_ID, variable: 'ENV_FILE'),
+                                string(credentialsId: env.HF_TOKEN_CREDENTIALS_ID, variable: 'HF_TOKEN')
                             ]) {
                                 sh '''
                                 if command -v apk >/dev/null 2>&1; then
@@ -173,9 +175,10 @@ spec:
                                 NAME_B64=$(printf '%s' "${CONTAINER_NAME}" | base64)
                                 ENV_FILE_B64=$(printf '%s' "${CONTAINER_ENV_FILE}" | base64)
                                 NETWORK_B64=$(printf '%s' "${DOCKER_NETWORK}" | base64)
+                                HF_TOKEN_B64=$(printf '%s' "${HF_TOKEN}" | base64)
 
                                 ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no "${SSH_USER}@${SERVER_HOST}" \
-                                "PASS_B64='${PASS_B64}' USER_B64='${USER_B64}' IMAGE_B64='${IMAGE_B64}' NAME_B64='${NAME_B64}' ENV_FILE_B64='${ENV_FILE_B64}' NETWORK_B64='${NETWORK_B64}' bash -s" <<'REMOTE'
+                                "PASS_B64='${PASS_B64}' USER_B64='${USER_B64}' IMAGE_B64='${IMAGE_B64}' NAME_B64='${NAME_B64}' ENV_FILE_B64='${ENV_FILE_B64}' NETWORK_B64='${NETWORK_B64}' HF_TOKEN_B64='${HF_TOKEN_B64}' bash -s" <<'REMOTE'
 set -e
 DOCKER_PASS=$(echo "$PASS_B64" | base64 -d)
 DOCKER_USER=$(echo "$USER_B64" | base64 -d)
@@ -183,6 +186,7 @@ FULL_IMAGE=$(echo "$IMAGE_B64" | base64 -d)
 CONTAINER_NAME=$(echo "$NAME_B64" | base64 -d)
 CONTAINER_ENV_FILE=$(echo "$ENV_FILE_B64" | base64 -d)
 DOCKER_NETWORK=$(echo "$NETWORK_B64" | base64 -d)
+HF_TOKEN=$(echo "$HF_TOKEN_B64" | base64 -d)
 
 echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
 docker pull "$FULL_IMAGE"
@@ -193,6 +197,7 @@ docker run -d \
   --restart unless-stopped \
   --network "$DOCKER_NETWORK" \
   -e TZ=UTC \
+  -e HF_TOKEN="$HF_TOKEN" \
   --env-file "$CONTAINER_ENV_FILE" \
   "$FULL_IMAGE"
 REMOTE
