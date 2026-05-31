@@ -1,58 +1,152 @@
-# Dublin Bikes
+# 🚲 Dublin Bikes
 
-前后端单仓（monorepo）：根目录下分两个独立工程。
+A full-stack Dublin Bikes (公共自行车) platform: live station availability, weather, journey planning, ML-based bike-availability prediction, user accounts, and an LLM chat assistant. Monorepo with a Spring Boot backend, a React frontend, and two Python microservices.
+
+## 📋 Table of Contents
+
+- [✨ Features](#-features)
+- [🧱 Architecture](#-architecture)
+- [🚀 Getting Started](#-getting-started)
+  - [🔧 Installation](#-installation)
+  - [⚙️ Configuration](#-configuration)
+- [💻 Usage](#-usage)
+- [🧬 Testing](#-testing)
+- [🤝 Contributing](#-contributing)
+- [📝 License](#-license)
+- [📧 Contact](#-contact)
+
+## ✨ Features
+
+- 🚲 **Station data** — metadata, real-time availability, and historical snapshots via `/api/stations`.
+- 🌦️ **Weather** — cached Dublin forecast served from the database via `/api/weather`.
+- 🗺️ **Journey planning** — walk → cycle → walk minimum-total-time search over the nearest stations (Google Maps Distance Matrix + Geocoding).
+- 🤖 **Bike-availability prediction** — a scikit-learn model served as a FastAPI microservice, exposed through `/api/stations/{n}/prediction`.
+- 🔐 **User accounts** — registration, email verification (code + link), JWT access/refresh, and instant logout via `token_version`.
+- 💬 **LLM chat assistant** — DeepSeek + LangChain in a standalone Python service; Spring proxies SSE streaming and enforces session ACLs.
+
+## 🧱 Architecture
 
 ```
 dublin-bikes/
-├── backend/         # Spring Boot (Java 21, Maven)
-│   ├── src/
-│   ├── devplan/     # 开发文档（后端重构计划）
-│   └── pom.xml
-├── frontend/        # 前端工程 (待初始化)
-│   └── ...
-├── chat-service/    # 独立 Python LLM 微服务 (FastAPI + LangChain + DeepSeek，S5 落地)
-│   └── ...
-├── .gitignore
-└── README.md
+├── backend/             # Spring Boot 3.5 (Java 21, Maven) — REST API, auth, proxies   :8080
+├── frontend/            # React + Vite + TypeScript SPA                                 :5173
+├── chat-service/        # FastAPI + LangChain + DeepSeek (LLM, message_store)           :8002
+├── prediction-service/  # FastAPI + scikit-learn (bike-availability model)              :8001
+├── scraper/             # External data ingestion (JCDecaux / weather)
+└── docs/                # Supplementary API & security notes
 ```
 
-## Backend
+The backend is the single entry point for the frontend; it handles persistence (PostgreSQL via Flyway + JPA), JWT auth, and journey logic, and proxies chat/prediction requests to the two Python services.
 
-Spring Boot 工程，Maven 构建。
+## 🚀 Getting Started
+
+### 🔧 Installation
+
+1. Clone the repository:
+   ```bash
+   git clone git@github.com:kaiwenyao/dublin-bikes.git
+   cd dublin-bikes
+   ```
+
+2. Backend (Spring Boot, Java 21):
+   ```bash
+   cd backend
+   ./mvnw clean package
+   cd ..
+   ```
+
+3. Frontend (React + Vite):
+   ```bash
+   cd frontend
+   npm install
+   cd ..
+   ```
+
+4. Python microservices (chat & prediction):
+   ```bash
+   for svc in chat-service prediction-service; do
+     cd "$svc"
+     python -m venv .venv && source .venv/bin/activate
+     pip install -r requirements.txt
+     deactivate
+     cd ..
+   done
+   ```
+
+### ⚙️ Configuration
+
+Each service reads configuration from environment variables. Copy the provided example files and fill in real values:
 
 ```bash
-cd backend
-./mvnw spring-boot:run    # 启动
-./mvnw test               # 测试
-./mvnw clean package      # 打包
+cp backend/src/main/resources/application-dev.yaml.example backend/src/main/resources/application-dev.yaml
+cp chat-service/.env.example       chat-service/.env
+cp prediction-service/.env.example prediction-service/.env
+cp frontend/.env.example           frontend/.env
 ```
 
-详见 [backend/devplan/](./backend/devplan/)。
+**Backend** (`application-dev.yaml`):
 
-## Frontend
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` / `DATABASE_USERNAME` / `DATABASE_PASSWORD` | PostgreSQL connection |
+| `JWT_SECRET_KEY` / `JWT_REFRESH_SECRET_KEY` | JWT signing secrets (≥32 chars) |
+| `MAIL_SERVER` / `MAIL_USERNAME` / `MAIL_PASSWORD` / `MAIL_FROM` | SMTP for verification emails |
+| `GOOGLE_MAPS_API_KEY` | Journey planning (Distance Matrix + Geocoding) |
+| `CHAT_SERVICE_BASE_URL` | Defaults to `http://localhost:8002` |
+| `PREDICTION_SERVICE_BASE_URL` | Defaults to `http://localhost:8001` |
 
-待初始化。建议在 `frontend/` 下 `npm create vite@latest .`（或 `pnpm create next-app` 等），选定框架后补充本节。
+**chat-service** (`.env`): `CHAT_DB_URL`, `DEEPSEEK_API_KEY` (optional: `DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`).
 
-## Chat Service (Python)
+**prediction-service** (`.env`): `HF_TOKEN` — downloads `bike_availability_model.pkl` + `model_features.pkl` from Hugging Face Hub at startup. Or drop the `.pkl` files into `prediction-service/machine_learning/` yourself.
 
-独立 Python 微服务，承担所有 LLM 逻辑（LangChain + DeepSeek + `message_store` 读写）。默认端口 **8002**；Spring 通过 `app.chat-service.base-url` 代理（见 [backend/devplan/04-modules.md §5.7](./backend/devplan/04-modules.md)）。
+**frontend** (`.env`): `VITE_GOOGLE_MAPS_API_KEY` (browser-exposed; not a secret).
+
+## 💻 Usage
+
+Start each service in its own terminal:
 
 ```bash
-cd chat-service
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env   # 设置 CHAT_DB_URL、DEEPSEEK_API_KEY
-uvicorn main:app --host 0.0.0.0 --port 8002
-curl http://localhost:8002/health
+# 1. prediction-service  → http://localhost:8001
+cd prediction-service && source .venv/bin/activate && uvicorn main:app --host 0.0.0.0 --port 8001
+
+# 2. chat-service        → http://localhost:8002
+cd chat-service && source .venv/bin/activate && uvicorn main:app --host 0.0.0.0 --port 8002
+
+# 3. backend             → http://localhost:8080
+cd backend && ./mvnw spring-boot:run
+
+# 4. frontend            → http://localhost:5173
+cd frontend && npm run dev
 ```
 
-CI/CD 见 [chat-service/Jenkinsfile](./chat-service/Jenkinsfile)。更多说明见 [chat-service/README.md](./chat-service/README.md)。
+Open <http://localhost:5173> in your browser. Verify the backend is healthy:
 
-## 开发文档
+```bash
+curl http://localhost:8080/actuator/health     # {"status":"UP"}
+```
 
-- [00-overview](./backend/devplan/00-overview.md)
-- [01-architecture](./backend/devplan/01-architecture.md)
-- [02-data-model](./backend/devplan/02-data-model.md)
-- [03-configuration-and-dependencies](./backend/devplan/03-configuration-and-dependencies.md)
-- [04-modules](./backend/devplan/04-modules.md)
-- [05-testing-and-roadmap](./backend/devplan/05-testing-and-roadmap.md)
+## 🧬 Testing
+
+```bash
+cd backend             && ./mvnw test                    # Spring Boot (JUnit 5)
+cd chat-service        && pytest                          # FastAPI chat service
+cd prediction-service  && pytest                          # FastAPI prediction service
+cd frontend            && npm test                        # frontend unit tests
+```
+
+## 🤝 Contributing
+
+1. Fork the repository.
+2. Create a feature branch: `git checkout -b feat/your-feature`.
+3. Commit your changes using Conventional Commits: `git commit -m "feat: add your feature"`.
+4. Push to your fork: `git push origin feat/your-feature`.
+5. Open a Pull Request against `main`.
+
+## 📝 License
+
+No license file is currently included. Add a `LICENSE` file to define usage terms.
+
+## 📧 Contact
+
+- 👤 **Maintainer:** [@kaiwenyao](https://github.com/kaiwenyao)
+- 🐛 **Issues:** <https://github.com/kaiwenyao/dublin-bikes/issues>
