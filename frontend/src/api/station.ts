@@ -1,5 +1,6 @@
 import request from './request'
 import { STATION_ENDPOINTS } from './endpoints'
+import { parseBackendUtcDateTime, formatChartAxisTime } from '@/lib/datetime'
 
 /** Station info (consistent with backend station_to_dict) */
 export interface StationVO {
@@ -105,9 +106,10 @@ export interface PredictionResponseVO {
 
 /** Unified format for Recharts chart usage after transformation */
 export interface ChartData {
-  timeLabel: string;     // Time displayed on X axis, e.g., "20:00"
-  bikes: number;         // Bike count on Y axis
-  isPrediction: boolean; // Mark whether it's prediction data (used to change chart style)
+  forecastTime: string;  // Raw UTC datetime from backend, e.g. "2026-05-31T15:00:00"
+  timeLabel: string;     // Local HH:MM for X axis
+  bikes: number;
+  isPrediction: boolean;
 }
 
 /**
@@ -138,18 +140,17 @@ export const getStationPredictionAPI = async (number: number, hours: number): Pr
     // 3. Slice corresponding hours based on user selection
     const slicedData = finalData.slice(0, hours);
 
-    // 4. Transform to format needed by Recharts chart
+    // 4. Transform to format needed by Recharts chart (display in user's local timezone)
     return slicedData.map(item => {
-      const date = new Date(item.forecast_time);
-      const hoursStr = date.getHours().toString().padStart(2, '0');
-      const minutesStr = date.getMinutes().toString().padStart(2, '0');
+      const date = parseBackendUtcDateTime(item.forecast_time)
 
       return {
-        timeLabel: `${hoursStr}:${minutesStr}`,
+        forecastTime: item.forecast_time,
+        timeLabel: formatChartAxisTime(date),
         bikes: item.predicted_available_bikes,
-        isPrediction: true // Add prediction label
-      };
-    });
+        isPrediction: true,
+      }
+    })
 
   } catch (error) {
     console.error(`Failed to fetch prediction data for station ${number}:`, error);

@@ -4,6 +4,7 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { getStationsAPI, getStationAvailabilityAPI, getStationsStatusAPI, getStationPredictionAPI, type StationVO, type ChartData as PredictionChartData, type StationAvailabilityVO } from '@/api/station'
 import { planJourneyAPI, type JourneyPlanResponse } from '@/api/journey'
 import Weather from '@/components/Weather'
+import { parseBackendUtcDateTime, formatChartAxisTime, formatChartTooltipTime } from '@/lib/datetime'
 
 
 // ========== Google Maps API Related Constants ==========
@@ -117,7 +118,9 @@ export default function Maps() {
     return fullStationHistory.filter(item => {
       // Parse time (compatible with numeric or string format)
       const num = Number(item.last_update);
-      const itemTime = !isNaN(num) ? num : new Date(String(item.last_update).replace(' ', 'T')).getTime();
+      const itemTime = !isNaN(num)
+        ? num
+        : parseBackendUtcDateTime(String(item.last_update)).getTime();
       
       const diffMs = now - itemTime;
       
@@ -1072,14 +1075,10 @@ export default function Maps() {
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
 
                       <XAxis
-                        dataKey={timeRange === 'history' ? "requested_at" : "timeLabel"}
+                        dataKey={isHistoryMode ? "requested_at" : "forecastTime"}
                         tickFormatter={(tick: string | number) => {
                           if (!tick) return '';
-                          if (timeRange !== 'history') return tick as string; 
-                          
-                          const d = new Date(tick);
-                          
-                          return `${d.getHours()}:${d.getMinutes().toString().padStart(2, '0')}`;
+                          return formatChartAxisTime(parseBackendUtcDateTime(tick));
                         }}
                         tick={{ fontSize: 12, fill: '#6b7280' }}
                         axisLine={false}
@@ -1095,8 +1094,11 @@ export default function Maps() {
                       />
 
                       <Tooltip
-                        labelFormatter={(label) => timeRange === 'history' ? new Date(label).toLocaleString('en-US') : `Predicted Time: ${label}`}
-                        formatter={(value) => [value, timeRange === 'history' ? 'Available Bikes' : 'Predicted Bikes 🔮']}
+                        labelFormatter={(label) => {
+                          const prefix = isHistoryMode ? '' : 'Predicted · '
+                          return `${prefix}${formatChartTooltipTime(parseBackendUtcDateTime(String(label)))}`
+                        }}
+                        formatter={(value) => [value, isHistoryMode ? 'Available Bikes' : 'Predicted Bikes 🔮']}
                       />
 
                       <Area
