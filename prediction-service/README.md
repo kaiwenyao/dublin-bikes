@@ -110,6 +110,7 @@ docker run --rm -p 8001:8001 \
 See [Jenkinsfile](./Jenkinsfile). Jenkins credentials:
 
 - `huggingface-token` (Secret text) — Hugging Face Hub access token. The Deploy stage injects it as `-e HF_TOKEN=...` so the container's entrypoint can pull `bike_availability_model.pkl` and `model_features.pkl` on start. Same credential ID as the Flask project's "Download ML Model" stage; reuse the same token.
-- `dublin-bikes-prediction-service.env` (Secret file) — runtime env file (mounted to `/opt/dublin-bikes-prediction-service/.env` on the remote server). Holds optional overrides such as `HF_MODEL_REPO`, `MODEL_DIR`. **`HF_TOKEN` does not go in here** — it comes from the dedicated credential above.
+
+No runtime env file is required — all other settings (`HF_MODEL_REPO`, `MODEL_DIR`, etc.) have sensible defaults baked into the Dockerfile. If you ever need to override them in production, add an env-file credential at that point.
 
 Production deploy joins `dublin-bikes-network` only (no host port mapping). Spring reaches this service at `http://dublin-bikes-prediction-service:8001` from inside Docker.

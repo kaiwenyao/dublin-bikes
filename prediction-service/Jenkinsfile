@@ -49,7 +49,6 @@ spec:
         booleanParam(name: 'PUSH_IMAGE', defaultValue: true, description: 'Push image to registry')
         booleanParam(name: 'DEPLOY_TO_SERVER', defaultValue: false, description: 'Deploy container to remote server')
         string(name: 'CONTAINER_NAME', defaultValue: 'dublin-bikes-prediction-service', description: 'Container name on remote server')
-        string(name: 'CONTAINER_ENV_FILE', defaultValue: '/opt/dublin-bikes-prediction-service/.env', description: 'Env file path on remote server')
         string(name: 'DOCKER_NETWORK', defaultValue: 'dublin-bikes-network', description: 'Docker network for deployment')
         string(name: 'SSH_KEY_CREDENTIALS_ID', defaultValue: 'server-ssh-key', description: 'Jenkins SSH key credential ID')
     }
@@ -57,7 +56,6 @@ spec:
     environment {
         DOCKER_CREDENTIALS_ID = 'docker-hub-credentials'
         SERVER_HOST_CREDENTIALS_ID = 'hel-host'
-        ENV_FILE_CREDENTIALS_ID = 'dublin-bikes-prediction-service.env'
         HF_TOKEN_CREDENTIALS_ID = 'huggingface-token'
     }
 
@@ -145,7 +143,6 @@ spec:
                         }
                     }
                     environment {
-                        CONTAINER_ENV_FILE = "${params.CONTAINER_ENV_FILE}"
                         DOCKER_NETWORK = "${params.DOCKER_NETWORK}"
                     }
                     steps {
@@ -154,7 +151,6 @@ spec:
                                 string(credentialsId: env.SERVER_HOST_CREDENTIALS_ID, variable: 'SERVER_HOST'),
                                 sshUserPrivateKey(credentialsId: params.SSH_KEY_CREDENTIALS_ID, keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER'),
                                 usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID, usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS'),
-                                file(credentialsId: env.ENV_FILE_CREDENTIALS_ID, variable: 'ENV_FILE'),
                                 string(credentialsId: env.HF_TOKEN_CREDENTIALS_ID, variable: 'HF_TOKEN')
                             ]) {
                                 sh '''
@@ -162,29 +158,20 @@ spec:
                                   apk add --no-cache openssh-client bash
                                 fi
 
-                                # Create .env directory on remote server if it doesn't exist
-                                ENV_DIR=$(dirname "${CONTAINER_ENV_FILE}")
-                                ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no "${SSH_USER}@${SERVER_HOST}" "mkdir -p ${ENV_DIR}"
-
-                                # Upload .env credential from Jenkins to the specified path on remote server
-                                scp -i "${SSH_KEY}" -o StrictHostKeyChecking=no "${ENV_FILE}" "${SSH_USER}@${SERVER_HOST}:${CONTAINER_ENV_FILE}"
-
                                 PASS_B64=$(printf '%s' "${DOCKER_PASS}" | base64)
                                 USER_B64=$(printf '%s' "${DOCKER_USER}" | base64)
                                 IMAGE_B64=$(printf '%s' "${FULL_IMAGE}" | base64)
                                 NAME_B64=$(printf '%s' "${CONTAINER_NAME}" | base64)
-                                ENV_FILE_B64=$(printf '%s' "${CONTAINER_ENV_FILE}" | base64)
                                 NETWORK_B64=$(printf '%s' "${DOCKER_NETWORK}" | base64)
                                 HF_TOKEN_B64=$(printf '%s' "${HF_TOKEN}" | base64)
 
                                 ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no "${SSH_USER}@${SERVER_HOST}" \
-                                "PASS_B64='${PASS_B64}' USER_B64='${USER_B64}' IMAGE_B64='${IMAGE_B64}' NAME_B64='${NAME_B64}' ENV_FILE_B64='${ENV_FILE_B64}' NETWORK_B64='${NETWORK_B64}' HF_TOKEN_B64='${HF_TOKEN_B64}' bash -s" <<'REMOTE'
+                                "PASS_B64='${PASS_B64}' USER_B64='${USER_B64}' IMAGE_B64='${IMAGE_B64}' NAME_B64='${NAME_B64}' NETWORK_B64='${NETWORK_B64}' HF_TOKEN_B64='${HF_TOKEN_B64}' bash -s" <<'REMOTE'
 set -e
 DOCKER_PASS=$(echo "$PASS_B64" | base64 -d)
 DOCKER_USER=$(echo "$USER_B64" | base64 -d)
 FULL_IMAGE=$(echo "$IMAGE_B64" | base64 -d)
 CONTAINER_NAME=$(echo "$NAME_B64" | base64 -d)
-CONTAINER_ENV_FILE=$(echo "$ENV_FILE_B64" | base64 -d)
 DOCKER_NETWORK=$(echo "$NETWORK_B64" | base64 -d)
 HF_TOKEN=$(echo "$HF_TOKEN_B64" | base64 -d)
 
@@ -198,7 +185,6 @@ docker run -d \
   --network "$DOCKER_NETWORK" \
   -e TZ=UTC \
   -e HF_TOKEN="$HF_TOKEN" \
-  --env-file "$CONTAINER_ENV_FILE" \
   "$FULL_IMAGE"
 REMOTE
                                 '''
