@@ -1,11 +1,17 @@
 # Model artifacts
 
-Drop the trained sklearn pickles here before starting the service:
+Two trained sklearn pickles are required at runtime:
 
 - `bike_availability_model.pkl` — the regression estimator
 - `model_features.pkl` — the ordered feature column list used during training
 
-Both files are gitignored. The Dockerfile copies this directory into the image; the Jenkins build pulls them from secure storage or expects them present in the workspace.
+Both files are gitignored. The container's `entrypoint.sh` resolves them at startup:
+
+1. If already present here (volume mount or local copy) → use as-is.
+2. Else if `HF_TOKEN` is set → download from `huggingface.co/HF_MODEL_REPO` (default `ucdse/bike_availability_model`).
+3. Else → service starts but `/predict` returns 503.
+
+For local dev you can drop the files here directly and skip the HF token.
 
 The feature schema must stay in sync with the Spring-side feature-row builder
 (`backend/src/main/java/dev/kaiwen/bikes/service/PredictionService.java`,
