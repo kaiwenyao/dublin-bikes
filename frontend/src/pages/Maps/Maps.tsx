@@ -33,6 +33,32 @@ const formatUpdateTime = (val: string | number) => {
   return dateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
 }
 
+type ChartTimeRange = 'history' | 'future_4h' | 'future_24h'
+
+const chartPrimaryTabClass = (active: boolean) =>
+  `flex-1 py-2 text-center text-sm rounded-lg transition-colors duration-150 ${
+    active
+      ? 'bg-white text-[#007EA7] font-semibold shadow-sm ring-2 ring-white/80'
+      : 'text-white/90 hover:bg-white/15'
+  }`
+
+const chartSecondaryTabClass = (active: boolean) =>
+  `flex-1 py-2 text-center text-xs rounded-md transition-colors duration-150 ${
+    active
+      ? 'bg-white text-[#007EA7] font-semibold shadow-sm ring-2 ring-white/80'
+      : 'text-white/90 hover:bg-white/20'
+  }`
+
+const getChartModeLabel = (
+  timeRange: ChartTimeRange,
+  historyRange: '4h' | '1d'
+): string => {
+  if (timeRange === 'history') {
+    return historyRange === '4h' ? 'Historic · Last 4 Hours' : 'Historic · Last 24 Hours'
+  }
+  return timeRange === 'future_4h' ? 'Prediction · Next 4 Hours' : 'Prediction · Next 24 Hours'
+}
+
 declare global {
   interface Window {
     [GOOGLE_MAPS_CALLBACK]?: () => void
@@ -102,6 +128,11 @@ export default function Maps() {
   }, [fullStationHistory, historyRange]);
   const displayedChartData: ReadonlyArray<StationAvailabilityVO | PredictionChartData> =
     timeRange === 'history' ? filteredHistory : predictionData
+
+  const isHistoryMode = timeRange === 'history'
+  const is4hActive = isHistoryMode ? historyRange === '4h' : timeRange === 'future_4h'
+  const is24hActive = isHistoryMode ? historyRange === '1d' : timeRange === 'future_24h'
+  const chartModeLabel = getChartModeLabel(timeRange, historyRange)
 
   // When selecting "Future Prediction", call backend API
   useEffect(() => {
@@ -947,72 +978,82 @@ export default function Maps() {
             <div className="overflow-hidden rounded-xl border border-gray-400">
               
               {/* === Top toggle section === */}
-              <div className="flex flex-col bg-[#007EA7] text-white"> {/* 👈 Updated to theme blue */}
+              <div className="flex flex-col bg-[#007EA7] text-white">
                 {/* First row: History vs Prediction */}
-                <div className="flex border-b border-white/20">
-                  {/* Left: History record tab */}
-                  <button 
-                    className={`flex-1 py-1.5 text-center text-sm transition-colors ${
-                      timeRange === 'history' 
-                        ? 'bg-white text-gray-800 font-bold' 
-                        : 'text-white hover:bg-black/10'     
-                    }`}
+                <div className="flex gap-1 p-1" role="tablist" aria-label="Chart data type">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={isHistoryMode}
+                    className={chartPrimaryTabClass(isHistoryMode)}
                     onClick={() => setTimeRange('history')}
                   >
                     Historic Data
                   </button>
-                  
-                  {/* Right: Prediction model dropdown tab */}
-                  <div 
-                    className={`flex-1 relative flex items-center transition-colors ${
-                      timeRange !== 'history' 
-                        ? 'bg-white text-[#007EA7] font-bold' // Prediction keeps purple, maintaining futuristic feel
-                        : 'text-white hover:bg-black/10'      
-                    }`}
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={!isHistoryMode}
+                    className={chartPrimaryTabClass(!isHistoryMode)}
+                    onClick={() => {
+                      setTimeRange(historyRange === '4h' ? 'future_4h' : 'future_24h')
+                    }}
                   >
-                    <select 
-                      value={timeRange === 'history' ? 'placeholder' : timeRange} 
-                      onChange={(e) => setTimeRange(e.target.value as 'future_4h' | 'future_24h')}
-                      className="w-full h-full py-1.5 px-3 text-center text-sm bg-transparent appearance-none cursor-pointer focus:outline-none"
-                    >
-                      {timeRange === 'history' && (
-                        <option value="placeholder" disabled hidden>Prediction Model 🔮</option>
-                      )}
-                      <option value="future_4h" className="text-gray-700 font-normal">Future 4 Hours 🔮</option>
-                      <option value="future_24h" className="text-gray-700 font-normal">Future 24 Hours 🔮</option>
-                    </select>
-                    <span className="absolute right-3 pointer-events-none text-xs opacity-70">▼</span>
-                  </div>
+                    Prediction 🔮
+                  </button>
                 </div>
 
-                {/* Second row: History range toggle (only appears when History is selected) */}
-                {timeRange === 'history' && (
-                  <div className="flex text-xs bg-black/10">
-                    {(['4h', '1d'] as const).map((range) => (
-                      <button
-                        key={range}
-                        onClick={() => setHistoryRange(range)}
-                        className={`flex-1 py-1.5 transition-colors border-r border-white/10 last:border-r-0 ${
-                          historyRange === range 
-                            ? 'bg-white text-[#007EA7] font-bold shadow-inner' // 👈 Active button text updated to theme blue
-                            : 'hover:bg-white/10 text-white/80'
-                        }`}
-                      >
-                        {range.toUpperCase()}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                {/* Second row: 4H / 24H range (always visible) */}
+                <div className="flex gap-1 bg-white/20 p-1 mx-1 mb-1 rounded-lg" role="tablist" aria-label="Chart time range">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={is4hActive}
+                    className={chartSecondaryTabClass(is4hActive)}
+                    onClick={() => {
+                      if (isHistoryMode) setHistoryRange('4h')
+                      else setTimeRange('future_4h')
+                    }}
+                  >
+                    4H
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={is24hActive}
+                    className={chartSecondaryTabClass(is24hActive)}
+                    onClick={() => {
+                      if (isHistoryMode) setHistoryRange('1d')
+                      else setTimeRange('future_24h')
+                    }}
+                  >
+                    24H
+                  </button>
+                </div>
               </div>
 
               {/* === Chart render area === */}
-              <div className="h-56 w-full bg-white p-2">
+              <div className="flex h-56 w-full flex-col bg-white p-2">
+                <div className="mb-1 flex shrink-0 justify-center">
+                  <span
+                    className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                      isHistoryMode
+                        ? 'bg-[#007EA7]/15 text-[#007EA7]'
+                        : 'bg-violet-100 text-violet-700'
+                    }`}
+                  >
+                    {chartModeLabel}
+                  </span>
+                </div>
                 {chartLoading ? (
-                  <div className="flex h-full w-full items-center justify-center text-gray-400 text-sm">
-                    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-[#007EA7] border-t-transparent mr-2" />
+                  <div className="flex min-h-0 flex-1 w-full items-center justify-center text-gray-400 text-sm">
+                    <span className={`inline-block h-4 w-4 animate-spin rounded-full border-2 border-t-transparent mr-2 ${
+                      isHistoryMode ? 'border-[#007EA7]' : 'border-violet-600'
+                    }`} />
                     Loading AI Prediction...
                   </div>
                 ) : displayedChartData.length > 0 ? (
+                  <div className="min-h-0 flex-1">
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart
                       data={displayedChartData}
@@ -1020,9 +1061,12 @@ export default function Maps() {
                     >
                       <defs>
                         <linearGradient id="colorBikes" x1="0" y1="0" x2="0" y2="1">
-                          {/* 👈 History chart gradient color updated to theme blue */}
                           <stop offset="5%" stopColor="#007EA7" stopOpacity={0.8} />
                           <stop offset="95%" stopColor="#007EA7" stopOpacity={0} />
+                        </linearGradient>
+                        <linearGradient id="colorBikesPrediction" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#7C3AED" stopOpacity={0.8} />
+                          <stop offset="95%" stopColor="#7C3AED" stopOpacity={0} />
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
@@ -1057,17 +1101,18 @@ export default function Maps() {
 
                       <Area
                         type="monotone"
-                        dataKey={timeRange === 'history' ? "available_bikes" : "bikes"}
-                        stroke="#007EA7" 
+                        dataKey={isHistoryMode ? "available_bikes" : "bikes"}
+                        stroke={isHistoryMode ? "#007EA7" : "#7C3AED"}
                         strokeWidth={2}
-                        strokeDasharray={timeRange === 'history' ? "0" : "5 5"}
+                        strokeDasharray={isHistoryMode ? "0" : "5 5"}
                         fillOpacity={1}
-                        fill="url(#colorBikes)"
+                        fill={isHistoryMode ? "url(#colorBikes)" : "url(#colorBikesPrediction)"}
                       />
                     </AreaChart>
                   </ResponsiveContainer>
+                  </div>
                 ) : (
-                  <div className="flex h-full w-full items-center justify-center text-gray-400 text-sm">
+                  <div className="flex min-h-0 flex-1 w-full items-center justify-center text-gray-400 text-sm">
                     {detailLoading ? 'Loading data...' : 'No data available'}
                   </div>
                 )}
