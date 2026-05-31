@@ -64,24 +64,3 @@ app:
     connect-timeout-ms: 5000
     read-timeout-ms: 10000
     max-retries: 2
-
----
-# Docker service discovery on dublin-bikes-network (non-secret; safe to commit).
-# Server-mounted application-prod.yaml overrides datasource, JWT, mail, etc.
-spring:
-  config:
-    activate:
-      on-profile: prod
-
-app:
-  chat-service:
-    base-url: ${CHAT_SERVICE_BASE_URL:http://dublin-bikes-chat-service:8002}
-    connect-timeout-ms: 3000
-    read-timeout-ms: 30000
-    stream-timeout-ms: 120000
-    title-timeout-ms: 8000
-
-  prediction-service:
-    base-url: ${PREDICTION_SERVICE_BASE_URL:http://dublin-bikes-prediction-service:8001}
-    connect-timeout-ms: 3000
-    read-timeout-ms: 15000

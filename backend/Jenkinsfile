@@ -57,7 +57,6 @@ spec:
     environment {
         DOCKER_CREDENTIALS_ID = 'docker-hub-credentials'
         SERVER_HOST_CREDENTIALS_ID = 'hel-host'
-        CONFIG_FILE_CREDENTIALS_ID = 'dublin-bikes-backend-prod-yaml'
     }
 
     stages {
@@ -165,8 +164,7 @@ spec:
                             withCredentials([
                                 string(credentialsId: env.SERVER_HOST_CREDENTIALS_ID, variable: 'SERVER_HOST'),
                                 sshUserPrivateKey(credentialsId: params.SSH_KEY_CREDENTIALS_ID, keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER'),
-                                usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID, usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS'),
-                                file(credentialsId: env.CONFIG_FILE_CREDENTIALS_ID, variable: 'CONFIG_FILE')
+                                usernamePassword(credentialsId: env.DOCKER_CREDENTIALS_ID, usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')
                             ]) {
                                 sh '''
                                 if command -v apk >/dev/null 2>&1; then
@@ -176,7 +174,7 @@ spec:
                                 CONFIG_DIR=$(dirname "${CONTAINER_CONFIG_FILE}")
                                 ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no "${SSH_USER}@${SERVER_HOST}" "mkdir -p ${CONFIG_DIR}"
 
-                                scp -i "${SSH_KEY}" -o StrictHostKeyChecking=no "${CONFIG_FILE}" "${SSH_USER}@${SERVER_HOST}:${CONTAINER_CONFIG_FILE}"
+                                scp -i "${SSH_KEY}" -o StrictHostKeyChecking=no "backend/src/main/resources/application-prod.yaml" "${SSH_USER}@${SERVER_HOST}:${CONTAINER_CONFIG_FILE}"
                                 ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no "${SSH_USER}@${SERVER_HOST}" "SUDO=\$(command -v sudo >/dev/null 2>&1 && echo sudo || true); \$SUDO chown 10001:10001 '${CONTAINER_CONFIG_FILE}' 2>/dev/null || true; \$SUDO chmod 0444 '${CONTAINER_CONFIG_FILE}'"
 
                                 PASS_B64=$(printf '%s' "${DOCKER_PASS}" | base64)
