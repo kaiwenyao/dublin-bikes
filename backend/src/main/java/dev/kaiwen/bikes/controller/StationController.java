@@ -2,7 +2,9 @@ package dev.kaiwen.bikes.controller;
 
 import dev.kaiwen.bikes.dto.ApiResponse;
 import dev.kaiwen.bikes.dto.response.AvailabilityVO;
+import dev.kaiwen.bikes.dto.response.PredictionPointVO;
 import dev.kaiwen.bikes.dto.response.StationVO;
+import dev.kaiwen.bikes.service.PredictionService;
 import dev.kaiwen.bikes.service.StationService;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class StationController {
 
     private final StationService stationService;
+    private final PredictionService predictionService;
 
     @GetMapping({"", "/"})
     public ApiResponse<List<StationVO>> listStations() {
@@ -31,5 +34,10 @@ public class StationController {
     @GetMapping("/status")
     public ApiResponse<List<AvailabilityVO>> getStatus() {
         return ApiResponse.ok(stationService.getLatestStatusForAllStations());
+    }
+
+    @GetMapping("/{number}/prediction")
+    public ApiResponse<List<PredictionPointVO>> getPrediction(@PathVariable int number) {
+        return ApiResponse.ok(predictionService.predict(number));
     }
 }
