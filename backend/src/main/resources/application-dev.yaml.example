@@ -34,6 +34,11 @@ app:
     stream-timeout-ms: 120000
     title-timeout-ms: 8000
 
+  prediction-service:
+    base-url: ${PREDICTION_SERVICE_BASE_URL:http://localhost:8001}
+    connect-timeout-ms: 3000
+    read-timeout-ms: 15000
+
   jwt:
     access-secret: ${JWT_SECRET_KEY:change-me-access-secret-32chars-min}
     refresh-secret: ${JWT_REFRESH_SECRET_KEY:change-me-refresh-secret-32chars-min}
