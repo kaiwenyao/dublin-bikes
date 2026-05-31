@@ -1,0 +1,49 @@
+# Copy to Jenkins credential / server path (e.g. /opt/dublin-bikes-backend/application-prod.yaml).
+# Microservice base-urls match Docker container names on dublin-bikes-network.
+# The same defaults are also in application.yaml (spring.config.activate.on-profile: prod).
+spring:
+  datasource:
+    url: ${DATABASE_URL}
+    username: ${DATABASE_USERNAME}
+    password: ${DATABASE_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 5000
+
+  jpa:
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+app:
+  jwt:
+    access-secret: ${JWT_SECRET_KEY}
+    refresh-secret: ${JWT_REFRESH_SECRET_KEY}
+    access-expires-seconds: ${JWT_ACCESS_EXPIRES_SECONDS:900}
+    refresh-expires-seconds: ${JWT_REFRESH_EXPIRES_SECONDS:604800}
+
+  verification:
+    code-expire-seconds: ${VERIFICATION_CODE_EXPIRE_SECONDS:300}
+    resend-cooldown-seconds: ${VERIFICATION_CODE_RESEND_COOLDOWN_SECONDS:60}
+
+  mail:
+    from: ${MAIL_FROM}
+    from-name: ${MAIL_DEFAULT_FROM_NAME:Dublin Bikes}
+    frontend-base-url: ${FRONTEND_BASE_URL}
+
+  google-maps:
+    api-key: ${GOOGLE_MAPS_API_KEY}
+
+  chat-service:
+    base-url: http://dublin-bikes-chat-service:8002
+    connect-timeout-ms: 3000
+    read-timeout-ms: 30000
+    stream-timeout-ms: 120000
+    title-timeout-ms: 8000
+
+  prediction-service:
+    base-url: http://dublin-bikes-prediction-service:8001
+    connect-timeout-ms: 3000
+    read-timeout-ms: 15000

@@ -37,6 +37,11 @@ app:
     stream-timeout-ms: 10000
     title-timeout-ms: 3000
 
+  prediction-service:
+    base-url: http://localhost:8001
+    connect-timeout-ms: 1000
+    read-timeout-ms: 5000
+
   jwt:
     access-secret: test-access-secret-key-at-least-32-bytes!!
     refresh-secret: test-refresh-secret-key-at-least-32-bytes!!
