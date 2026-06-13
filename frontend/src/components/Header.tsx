@@ -65,7 +65,7 @@ export default function Header() {
                 Maps
               </Link>
               <a
-                href="https://github.com/ucdse/react-app"
+                href="https://github.com/kaiwenyao/dublin-bikes"
                 target="_blank"
                 rel="noopener noreferrer"
                 className={cn(
