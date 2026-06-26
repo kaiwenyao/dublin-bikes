@@ -1,6 +1,7 @@
 package dev.kaiwen.bikes.config;
 
 import java.time.Duration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -9,6 +10,7 @@ import org.springframework.web.client.RestClient;
 
 @Configuration
 @EnableConfigurationProperties(PredictionServiceProperties.class)
+@ConditionalOnProperty(prefix = "app.prediction-service", name = "base-url")
 public class PredictionServiceConfig {
 
     @Bean

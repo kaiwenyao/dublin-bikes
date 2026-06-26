@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -11,6 +12,7 @@ import org.springframework.web.client.RestClient;
 @Slf4j
 @Component
 @RequiredArgsConstructor
+@ConditionalOnProperty(prefix = "app.prediction-service", name = "base-url")
 public class PredictionServiceClient {
 
     private final RestClient predictionServiceRestClient;

@@ -90,9 +90,10 @@ public class GoogleMapsClient {
                                                 .build())
                         .retrieve()
                         .body(JsonNode.class);
-        if (root == null || !"OK".equals(text(root, "status"))) {
-            throw mapsUnavailable();
+        if (root == null) {
+            throw new GoogleMapsTransientException("empty distance matrix response");
         }
+        validateDistanceMatrixResponse(root);
         JsonNode rows = root.path("rows");
         int[][] result = new int[origins.size()][destinations.size()];
         for (int i = 0; i < origins.size(); i++) {
@@ -107,6 +108,31 @@ public class GoogleMapsClient {
             }
         }
         return result;
+    }
+
+    static void validateDistanceMatrixResponse(JsonNode root) {
+        String status = text(root, "status");
+        if ("OK".equals(status)) {
+            return;
+        }
+        String errorMsg = text(root, "error_message");
+        if ("REQUEST_DENIED".equals(status)) {
+            String detail = errorMsg != null ? errorMsg : "API key or permissions issue";
+            throw new BusinessException(
+                    ApiCodes.GENERIC_ERROR,
+                    "Route planning service configuration error: " + detail,
+                    502);
+        }
+        if ("OVER_QUERY_LIMIT".equals(status)) {
+            throw new GoogleMapsTransientException("Google Maps query limit exceeded");
+        }
+        if ("INVALID_REQUEST".equals(status)) {
+            throw new BusinessException(
+                    ApiCodes.VALIDATION_ERROR,
+                    "invalid route planning request",
+                    400);
+        }
+        throw new GoogleMapsTransientException("distance matrix status: " + status);
     }
 
     @SuppressWarnings("unused")
