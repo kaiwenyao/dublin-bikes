@@ -2,11 +2,16 @@ import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { getAccessToken, clearAuthTokens, userLogoutAPI } from '@/api'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { useNavigationIntent } from '@/contexts/NavigationContext'
+
+const NAV_PATHS = ['/news', '/chat', '/maps', '/profile'] as const
 
 export default function Header() {
   const navigate = useNavigate()
   const location = useLocation()
+  const { pendingPath, setPendingPath } = useNavigationIntent()
   const isLoggedIn = !!getAccessToken()
+  const activePath = pendingPath ?? location.pathname
 
   const handleLogout = async () => {
     let logoutByServerSucceeded = false
@@ -26,15 +31,23 @@ export default function Header() {
     }
   }
 
-  const isActive = (path: string) => location.pathname === path
+  const isActive = (path: string) => activePath === path
 
-  const navLinkClasses = (path: string) =>
-    cn(
-      'relative px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 cursor-pointer',
-      isActive(path)
+  const handleNavIntent = (path: string) => () => {
+    if (NAV_PATHS.includes(path as (typeof NAV_PATHS)[number])) {
+      setPendingPath(path)
+    }
+  }
+
+  const navLinkClasses = (path: string) => {
+    const active = isActive(path)
+    return cn(
+      'relative px-4 py-2 text-sm font-medium rounded-lg cursor-pointer',
+      active
         ? 'text-[#00A8E8] bg-[#00A8E8]/10'
-        : 'text-gray-700 hover:text-[#00A8E8] hover:bg-[#00A8E8]/10'
+        : 'text-gray-700 hover:text-[#00A8E8] hover:bg-[#00A8E8]/10 transition-colors duration-200'
     )
+  }
 
   return (
     <header className="fixed top-4 left-4 right-4 z-50 flex justify-center">
@@ -55,13 +68,25 @@ export default function Header() {
               <span className="hidden sm:inline">Dublin Bikes</span>
             </Link>
             <div className="flex items-center gap-1">
-              <Link to="/news" className={navLinkClasses('/news')}>
+              <Link
+                to="/news"
+                className={navLinkClasses('/news')}
+                onPointerDown={handleNavIntent('/news')}
+              >
                 News
               </Link>
-              <Link to="/chat" className={navLinkClasses('/chat')}>
+              <Link
+                to="/chat"
+                className={navLinkClasses('/chat')}
+                onPointerDown={handleNavIntent('/chat')}
+              >
                 Chat
               </Link>
-              <Link to="/maps" className={navLinkClasses('/maps')}>
+              <Link
+                to="/maps"
+                className={navLinkClasses('/maps')}
+                onPointerDown={handleNavIntent('/maps')}
+              >
                 Maps
               </Link>
               <a
@@ -69,7 +94,7 @@ export default function Header() {
                 target="_blank"
                 rel="noopener noreferrer"
                 className={cn(
-                  'relative px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 cursor-pointer',
+                  'relative px-4 py-2 text-sm font-medium rounded-lg transition-colors duration-200 cursor-pointer',
                   'text-gray-700 hover:text-[#00A8E8] hover:bg-[#00A8E8]/10 flex items-center gap-2'
                 )}
               >
@@ -91,6 +116,7 @@ export default function Header() {
                     navLinkClasses('/profile'),
                     'flex items-center gap-2'
                   )}
+                  onPointerDown={handleNavIntent('/profile')}
                 >
                   <svg
                     className="h-4 w-4"
@@ -109,7 +135,7 @@ export default function Header() {
                 <button
                   type="button"
                   onClick={handleLogout}
-                  className="ml-2 rounded-lg border border-gray-300 bg-white/60 px-4 py-2 text-sm font-medium text-gray-700 transition-all duration-200 hover:bg-gray-900 hover:text-white hover:border-gray-900 cursor-pointer"
+                  className="ml-2 rounded-lg border border-gray-300 bg-white/60 px-4 py-2 text-sm font-medium text-gray-700 transition-colors duration-200 hover:bg-gray-900 hover:text-white hover:border-gray-900 cursor-pointer"
                 >
                   Log out
                 </button>
@@ -118,7 +144,7 @@ export default function Header() {
               <>
                 <Link
                   to="/login"
-                  className="relative px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 cursor-pointer text-gray-700 hover:text-[#00A8E8] hover:bg-[#00A8E8]/10"
+                  className="relative px-4 py-2 text-sm font-medium rounded-lg transition-colors duration-200 cursor-pointer text-gray-700 hover:text-[#00A8E8] hover:bg-[#00A8E8]/10"
                 >
                   Sign in
                 </Link>
