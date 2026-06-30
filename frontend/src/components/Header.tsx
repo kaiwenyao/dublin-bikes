@@ -1,10 +1,16 @@
+import { useRef, type PointerEvent } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { getAccessToken, clearAuthTokens, userLogoutAPI } from '@/api'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { isSameTabPrimaryActivation } from '@/lib/navigation-intent'
 import { useNavigationIntent } from '@/contexts/NavigationContext'
 
 const NAV_PATHS = ['/news', '/chat', '/maps', '/profile'] as const
+
+function isNavPath(path: string): path is (typeof NAV_PATHS)[number] {
+  return NAV_PATHS.includes(path as (typeof NAV_PATHS)[number])
+}
 
 export default function Header() {
   const navigate = useNavigate()
@@ -12,6 +18,7 @@ export default function Header() {
   const { pendingPath, setPendingPath } = useNavigationIntent()
   const isLoggedIn = !!getAccessToken()
   const activePath = pendingPath ?? location.pathname
+  const navClickCommittedRef = useRef(false)
 
   const handleLogout = async () => {
     let logoutByServerSucceeded = false
@@ -33,9 +40,59 @@ export default function Header() {
 
   const isActive = (path: string) => activePath === path
 
-  const handleNavIntent = (path: string) => () => {
-    if (NAV_PATHS.includes(path as (typeof NAV_PATHS)[number])) {
+  const createNavIntentHandlers = (path: string) => {
+    const clearPendingForPath = () => {
+      setPendingPath((current) => (current === path ? null : current))
+    }
+
+    const handlePointerDown = (event: PointerEvent<HTMLAnchorElement>) => {
+      if (!isNavPath(path)) return
+      if (!isSameTabPrimaryActivation(event)) return
+      if (path === location.pathname) return
+
+      navClickCommittedRef.current = false
       setPendingPath(path)
+      event.currentTarget.setPointerCapture(event.pointerId)
+    }
+
+    const handlePointerUp = (event: PointerEvent<HTMLAnchorElement>) => {
+      if (event.button !== 0) return
+
+      const target = event.currentTarget
+      if (target.hasPointerCapture(event.pointerId)) {
+        target.releasePointerCapture(event.pointerId)
+      }
+
+      const intendedPath = path
+      window.setTimeout(() => {
+        if (!navClickCommittedRef.current) {
+          setPendingPath((current) => (current === intendedPath ? null : current))
+        }
+        navClickCommittedRef.current = false
+      }, 0)
+    }
+
+    const handlePointerCancel = (event: PointerEvent<HTMLAnchorElement>) => {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+      clearPendingForPath()
+      navClickCommittedRef.current = false
+    }
+
+    const handleClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
+      if (!isSameTabPrimaryActivation(event)) {
+        clearPendingForPath()
+        return
+      }
+      navClickCommittedRef.current = true
+    }
+
+    return {
+      onPointerDown: handlePointerDown,
+      onPointerUp: handlePointerUp,
+      onPointerCancel: handlePointerCancel,
+      onClick: handleClick,
     }
   }
 
@@ -71,21 +128,21 @@ export default function Header() {
               <Link
                 to="/news"
                 className={navLinkClasses('/news')}
-                onPointerDown={handleNavIntent('/news')}
+                {...createNavIntentHandlers('/news')}
               >
                 News
               </Link>
               <Link
                 to="/chat"
                 className={navLinkClasses('/chat')}
-                onPointerDown={handleNavIntent('/chat')}
+                {...createNavIntentHandlers('/chat')}
               >
                 Chat
               </Link>
               <Link
                 to="/maps"
                 className={navLinkClasses('/maps')}
-                onPointerDown={handleNavIntent('/maps')}
+                {...createNavIntentHandlers('/maps')}
               >
                 Maps
               </Link>
@@ -116,7 +173,7 @@ export default function Header() {
                     navLinkClasses('/profile'),
                     'flex items-center gap-2'
                   )}
-                  onPointerDown={handleNavIntent('/profile')}
+                  {...createNavIntentHandlers('/profile')}
                 >
                   <svg
                     className="h-4 w-4"
