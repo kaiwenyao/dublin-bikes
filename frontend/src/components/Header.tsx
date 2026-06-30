@@ -1,12 +1,24 @@
+import { useRef, type PointerEvent } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { getAccessToken, clearAuthTokens, userLogoutAPI } from '@/api'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { isSameTabPrimaryActivation } from '@/lib/navigation-intent'
+import { useNavigationIntent } from '@/contexts/NavigationContext'
+
+const NAV_PATHS = ['/news', '/chat', '/maps', '/profile'] as const
+
+function isNavPath(path: string): path is (typeof NAV_PATHS)[number] {
+  return NAV_PATHS.includes(path as (typeof NAV_PATHS)[number])
+}
 
 export default function Header() {
   const navigate = useNavigate()
   const location = useLocation()
+  const { pendingPath, setPendingPath } = useNavigationIntent()
   const isLoggedIn = !!getAccessToken()
+  const activePath = pendingPath ?? location.pathname
+  const navClickCommittedRef = useRef(false)
 
   const handleLogout = async () => {
     let logoutByServerSucceeded = false
@@ -26,15 +38,73 @@ export default function Header() {
     }
   }
 
-  const isActive = (path: string) => location.pathname === path
+  const isActive = (path: string) => activePath === path
 
-  const navLinkClasses = (path: string) =>
-    cn(
-      'relative px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 cursor-pointer',
-      isActive(path)
+  const createNavIntentHandlers = (path: string) => {
+    const clearPendingForPath = () => {
+      setPendingPath((current) => (current === path ? null : current))
+    }
+
+    const handlePointerDown = (event: PointerEvent<HTMLAnchorElement>) => {
+      if (!isNavPath(path)) return
+      if (!isSameTabPrimaryActivation(event)) return
+      if (path === location.pathname) return
+
+      navClickCommittedRef.current = false
+      setPendingPath(path)
+      event.currentTarget.setPointerCapture(event.pointerId)
+    }
+
+    const handlePointerUp = (event: PointerEvent<HTMLAnchorElement>) => {
+      if (event.button !== 0) return
+
+      const target = event.currentTarget
+      if (target.hasPointerCapture(event.pointerId)) {
+        target.releasePointerCapture(event.pointerId)
+      }
+
+      const intendedPath = path
+      window.setTimeout(() => {
+        if (!navClickCommittedRef.current) {
+          setPendingPath((current) => (current === intendedPath ? null : current))
+        }
+        navClickCommittedRef.current = false
+      }, 0)
+    }
+
+    const handlePointerCancel = (event: PointerEvent<HTMLAnchorElement>) => {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+      clearPendingForPath()
+      navClickCommittedRef.current = false
+    }
+
+    const handleClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
+      if (!isSameTabPrimaryActivation(event)) {
+        clearPendingForPath()
+        return
+      }
+      navClickCommittedRef.current = true
+    }
+
+    return {
+      onPointerDown: handlePointerDown,
+      onPointerUp: handlePointerUp,
+      onPointerCancel: handlePointerCancel,
+      onClick: handleClick,
+    }
+  }
+
+  const navLinkClasses = (path: string) => {
+    const active = isActive(path)
+    return cn(
+      'relative px-4 py-2 text-sm font-medium rounded-lg cursor-pointer',
+      active
         ? 'text-[#00A8E8] bg-[#00A8E8]/10'
-        : 'text-gray-700 hover:text-[#00A8E8] hover:bg-[#00A8E8]/10'
+        : 'text-gray-700 hover:text-[#00A8E8] hover:bg-[#00A8E8]/10 transition-colors duration-200'
     )
+  }
 
   return (
     <header className="fixed top-4 left-4 right-4 z-50 flex justify-center">
@@ -55,13 +125,25 @@ export default function Header() {
               <span className="hidden sm:inline">Dublin Bikes</span>
             </Link>
             <div className="flex items-center gap-1">
-              <Link to="/news" className={navLinkClasses('/news')}>
+              <Link
+                to="/news"
+                className={navLinkClasses('/news')}
+                {...createNavIntentHandlers('/news')}
+              >
                 News
               </Link>
-              <Link to="/chat" className={navLinkClasses('/chat')}>
+              <Link
+                to="/chat"
+                className={navLinkClasses('/chat')}
+                {...createNavIntentHandlers('/chat')}
+              >
                 Chat
               </Link>
-              <Link to="/maps" className={navLinkClasses('/maps')}>
+              <Link
+                to="/maps"
+                className={navLinkClasses('/maps')}
+                {...createNavIntentHandlers('/maps')}
+              >
                 Maps
               </Link>
               <a
@@ -69,7 +151,7 @@ export default function Header() {
                 target="_blank"
                 rel="noopener noreferrer"
                 className={cn(
-                  'relative px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 cursor-pointer',
+                  'relative px-4 py-2 text-sm font-medium rounded-lg transition-colors duration-200 cursor-pointer',
                   'text-gray-700 hover:text-[#00A8E8] hover:bg-[#00A8E8]/10 flex items-center gap-2'
                 )}
               >
@@ -91,6 +173,7 @@ export default function Header() {
                     navLinkClasses('/profile'),
                     'flex items-center gap-2'
                   )}
+                  {...createNavIntentHandlers('/profile')}
                 >
                   <svg
                     className="h-4 w-4"
@@ -109,7 +192,7 @@ export default function Header() {
                 <button
                   type="button"
                   onClick={handleLogout}
-                  className="ml-2 rounded-lg border border-gray-300 bg-white/60 px-4 py-2 text-sm font-medium text-gray-700 transition-all duration-200 hover:bg-gray-900 hover:text-white hover:border-gray-900 cursor-pointer"
+                  className="ml-2 rounded-lg border border-gray-300 bg-white/60 px-4 py-2 text-sm font-medium text-gray-700 transition-colors duration-200 hover:bg-gray-900 hover:text-white hover:border-gray-900 cursor-pointer"
                 >
                   Log out
                 </button>
@@ -118,7 +201,7 @@ export default function Header() {
               <>
                 <Link
                   to="/login"
-                  className="relative px-4 py-2 text-sm font-medium rounded-lg transition-all duration-200 cursor-pointer text-gray-700 hover:text-[#00A8E8] hover:bg-[#00A8E8]/10"
+                  className="relative px-4 py-2 text-sm font-medium rounded-lg transition-colors duration-200 cursor-pointer text-gray-700 hover:text-[#00A8E8] hover:bg-[#00A8E8]/10"
                 >
                   Sign in
                 </Link>
