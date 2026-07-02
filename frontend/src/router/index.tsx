@@ -1,14 +1,16 @@
+import { lazy } from 'react'
 import { createBrowserRouter } from 'react-router-dom'
 import Layout from '@/components/Layout'
-import Activate from '@/pages/Activate/Activate'
-import Chat from '@/pages/Chat/Chat'
-import Home from '@/pages/Home/Home'
-import Login from '@/pages/Login/Login'
-import Maps from '@/pages/Maps/Maps'
-import News from '@/pages/News/News'
-import Profile from '@/pages/Profile/Profile'
-import Register from '@/pages/Register/Register'
-import VerifyEmail from '@/pages/VerifyEmail/VerifyEmail'
+
+const Home = lazy(() => import('@/pages/Home/Home'))
+const Activate = lazy(() => import('@/pages/Activate/Activate'))
+const Chat = lazy(() => import('@/pages/Chat/Chat'))
+const Login = lazy(() => import('@/pages/Login/Login'))
+const Maps = lazy(() => import('@/pages/Maps/Maps'))
+const News = lazy(() => import('@/pages/News/News'))
+const Profile = lazy(() => import('@/pages/Profile/Profile'))
+const Register = lazy(() => import('@/pages/Register/Register'))
+const VerifyEmail = lazy(() => import('@/pages/VerifyEmail/VerifyEmail'))
 
 export const router = createBrowserRouter([
   {
