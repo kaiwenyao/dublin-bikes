@@ -16,8 +16,10 @@ python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env        # set CHAT_DB_URL and DEEPSEEK_API_KEY
-uvicorn main:app --host 0.0.0.0 --port 8002
+uvicorn main:app --host 0.0.0.0 --port 8002 --reload
 ```
+
+`--reload` is intended for local development only. It restarts FastAPI when Python files change; Docker and production deployments use the non-reload command in `Dockerfile`.
 
 Health check (works without API keys):
 

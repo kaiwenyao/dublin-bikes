@@ -112,7 +112,7 @@ Start each service in its own terminal:
 cd prediction-service && source .venv/bin/activate && uvicorn main:app --host 0.0.0.0 --port 8001
 
 # 2. chat-service        → http://localhost:8002
-cd chat-service && source .venv/bin/activate && uvicorn main:app --host 0.0.0.0 --port 8002
+cd chat-service && source .venv/bin/activate && uvicorn main:app --host 0.0.0.0 --port 8002 --reload
 
 # 3. backend             → http://localhost:8080
 cd backend && ./mvnw spring-boot:run
@@ -122,6 +122,8 @@ cd frontend && npm run dev
 ```
 
 Open <http://localhost:5173> in your browser. Verify the backend is healthy:
+
+`--reload` is for local chat-service development only. It restarts FastAPI when Python files change; production and Docker deployments should keep the non-reload command from `chat-service/Dockerfile`.
 
 ```bash
 curl http://localhost:8080/actuator/health     # {"status":"UP"}

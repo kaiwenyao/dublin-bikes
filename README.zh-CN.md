@@ -112,7 +112,7 @@ cp frontend/.env.example           frontend/.env
 cd prediction-service && source .venv/bin/activate && uvicorn main:app --host 0.0.0.0 --port 8001
 
 # 2. chat-service        → http://localhost:8002
-cd chat-service && source .venv/bin/activate && uvicorn main:app --host 0.0.0.0 --port 8002
+cd chat-service && source .venv/bin/activate && uvicorn main:app --host 0.0.0.0 --port 8002 --reload
 
 # 3. backend             → http://localhost:8080
 cd backend && ./mvnw spring-boot:run
@@ -122,6 +122,8 @@ cd frontend && npm run dev
 ```
 
 在浏览器中打开 <http://localhost:5173>。验证后端健康状态：
+
+`--reload` 只用于本地开发 chat-service。Python 文件变化时 FastAPI 会自动重启；生产环境和 Docker 部署仍使用 `chat-service/Dockerfile` 中的不带 reload 的命令。
 
 ```bash
 curl http://localhost:8080/actuator/health     # {"status":"UP"}
