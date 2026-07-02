@@ -11,10 +11,17 @@ export async function deleteChatSessionAPI(sessionId: string): Promise<void> {
 export interface ChatStreamOptions {
   chat_id: string
   message: string
+  location?: ChatLocation
   signal?: AbortSignal
   onMessage: (chunk: string) => void
   onDone?: () => void
   onError?: (error: Error) => void
+}
+
+export interface ChatLocation {
+  lat: number
+  lng: number
+  accuracy_m?: number
 }
 
 export interface ChatSession {
@@ -88,7 +95,7 @@ function openStream(
   options: ChatStreamOptions,
   signal?: AbortSignal
 ): Promise<void> {
-  const { chat_id, message, onMessage, onDone, onError } = options
+  const { chat_id, message, location, onMessage, onDone, onError } = options
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${token}`,
@@ -122,7 +129,7 @@ function openStream(
     fetchEventSource(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ chat_id, message }),
+      body: JSON.stringify({ chat_id, message, ...(location ? { location } : {}) }),
       signal: signal ?? undefined,
       openWhenHidden: true,
       async onopen(response) {

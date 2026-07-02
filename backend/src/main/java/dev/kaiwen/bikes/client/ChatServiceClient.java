@@ -1,7 +1,9 @@
 package dev.kaiwen.bikes.client;
 
+import dev.kaiwen.bikes.dto.request.ChatRequestDTO;
 import dev.kaiwen.bikes.dto.response.ChatMessageVO;
 import dev.kaiwen.bikes.dto.response.ChatReplyVO;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
@@ -19,12 +21,20 @@ public class ChatServiceClient {
     private final RestClient chatServiceRestClient;
     private final RestClient chatServiceTitleRestClient;
 
-    public ChatReplyVO chat(String sessionId, int userId, String message) {
+    public ChatReplyVO chat(
+            String sessionId, int userId, String message, ChatRequestDTO.LocationDTO location) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("session_id", sessionId);
+        body.put("user_id", userId);
+        body.put("message", message);
+        if (location != null) {
+            body.put("location", location);
+        }
         return chatServiceRestClient
                 .post()
                 .uri("/chat")
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("session_id", sessionId, "user_id", userId, "message", message))
+                .body(body)
                 .retrieve()
                 .body(ChatReplyVO.class);
     }

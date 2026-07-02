@@ -19,6 +19,7 @@ const state = {
   streamRequests: 0,
   failNextStreamCount: 0,
   refreshDelayMs: 0,
+  lastStreamBody: null,
 }
 
 class MemoryStorage {
@@ -106,7 +107,7 @@ const createServer = () =>
 
     if (request.method === 'POST' && request.url === '/api/chat/stream') {
       state.streamRequests += 1
-      await readRequestBody(request)
+      state.lastStreamBody = await readRequestBody(request)
 
       if (state.failNextStreamCount > 0) {
         state.failNextStreamCount -= 1
@@ -190,6 +191,7 @@ beforeEach(() => {
   state.streamRequests = 0
   state.failNextStreamCount = 0
   state.refreshDelayMs = 0
+  state.lastStreamBody = null
   validAccessToken = fakeJwt()
   refreshToken = 'refresh-token'
   window.localStorage.clear()
@@ -218,6 +220,23 @@ test('refreshes once before chat stream when access token is expired', async () 
   assert.equal(state.refreshRequests, 1)
   assert.equal(state.streamRequests, 1)
   assert.match(content, /verified/)
+})
+
+test('sends location context with chat stream requests', async () => {
+  window.localStorage.setItem('access_token', validAccessToken)
+
+  await chatStreamAPI({
+    chat_id: 'with_location',
+    message: 'nearest station',
+    location: { lat: 53.3498, lng: -6.2603, accuracy_m: 35 },
+    onMessage() {},
+  })
+
+  assert.deepEqual(state.lastStreamBody.location, {
+    lat: 53.3498,
+    lng: -6.2603,
+    accuracy_m: 35,
+  })
 })
 
 test('refreshes once and retries once when chat stream handshake returns 401', async () => {

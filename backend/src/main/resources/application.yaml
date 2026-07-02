@@ -59,9 +59,6 @@ resilience4j:
           - dev.kaiwen.bikes.exception.BusinessException
 
 app:
-  internal-ai-tools:
-    service-token: ${AI_SERVICE_TOKEN:}
-
   google-maps:
     api-key: ${GOOGLE_MAPS_API_KEY:}
     connect-timeout-ms: 5000

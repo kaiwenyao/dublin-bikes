@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from functools import lru_cache
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-import httpx
 import psycopg
 from fastapi import FastAPI, HTTPException
 from langchain_community.chat_message_histories import SQLChatMessageHistory
@@ -22,25 +22,31 @@ logger = logging.getLogger(__name__)
 
 ROLE_MAP = {"human": "user", "ai": "assistant"}
 MAX_TOOL_STEPS = 4
+EARTH_RADIUS_M = 6_371_000
 ASSISTANT_GREETING = (
     "Hi! I'm your UCDSE assistant. Ask me about bike sharing, stations, "
     "or sustainable mobility—or just say hello."
 )
 
-# --- 工具描述 ---
 tools = [
     {
         "type": "function",
         "function": {
-            "name": "get_current_user",
+            "name": "get_nearest_station_availability",
             "description": (
-                "Fetch the current session owner's id and email. Call only for direct "
-                "requests like 'what is my id?' or 'what is my email?'. For all other "
-                "messages, ignore this function."
+                "Find the nearest Dublin Bikes station availability using the current "
+                "request location. Use for nearby or closest station questions."
             ),
             "parameters": {
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Number of nearest stations to return.",
+                        "minimum": 1,
+                        "maximum": 5,
+                    }
+                },
                 "required": [],
                 "additionalProperties": False,
             },
@@ -59,11 +65,6 @@ class Settings(BaseSettings):
         validation_alias="DEEPSEEK_BASE_URL",
     )
     deepseek_model: str = Field(default="deepseek-chat", validation_alias="DEEPSEEK_MODEL")
-    internal_tools_base_url: str = Field(
-        default="http://localhost:8080/internal/ai/tools",
-        validation_alias="INTERNAL_TOOLS_BASE_URL",
-    )
-    ai_service_token: str | None = Field(default=None, validation_alias="AI_SERVICE_TOKEN")
 
     @property
     def is_configured(self) -> bool:
@@ -75,12 +76,19 @@ def get_settings() -> Settings:
     return Settings()
 
 
+class GeoLocation(BaseModel):
+    lat: float = Field(..., ge=-90, le=90)
+    lng: float = Field(..., ge=-180, le=180)
+    accuracy_m: float | None = Field(default=None, ge=0)
+
+
 class ChatRequest(BaseModel):
     # user_id is forwarded by Spring after JWT auth; this service does not verify
     # session ownership — see README "Trust boundaries".
     session_id: str
     user_id: int
     message: str = Field(..., max_length=4000)
+    location: GeoLocation | None = None
 
 
 class ChatReply(BaseModel):
@@ -186,29 +194,139 @@ def _map_messages(messages: list[Any]) -> list[MessageItem]:
     return items
 
 
-# --- 工具实现 ---
-def get_current_user(session_id: str, settings: Settings) -> dict[str, Any]:
-    if not settings.ai_service_token:
-        raise RuntimeError("AI_SERVICE_TOKEN is not configured")
-    url = settings.internal_tools_base_url.rstrip("/") + "/current-user"
-    headers = {"Authorization": f"Bearer {settings.ai_service_token}"}
-    with httpx.Client(timeout=5.0) as client:
-        response = client.get(url, params={"session_id": session_id}, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-    return {"id": data.get("id"), "email": data.get("email")}
+def _distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> int:
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+    delta_lat = math.radians(lat2 - lat1)
+    delta_lng = math.radians(lng2 - lng1)
+    a = (
+        math.sin(delta_lat / 2) ** 2
+        + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lng / 2) ** 2
+    )
+    return round(EARTH_RADIUS_M * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
+
+
+def get_nearest_station_availability(
+    req: ChatRequest,
+    settings: Settings,
+    limit: int = 3,
+) -> dict[str, Any]:
+    if req.location is None:
+        return {
+            "error": "location_required",
+            "message": "Ask the user to share their current location before answering.",
+        }
+
+    try:
+        normalized_limit = max(1, min(int(limit), 5))
+    except (TypeError, ValueError):
+        normalized_limit = 3
+
+    query = """
+        WITH latest AS (
+            SELECT ranked.*
+            FROM (
+                SELECT
+                    a.*,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY a.number
+                        ORDER BY a."timestamp" DESC, a.id DESC
+                    ) AS rn
+                FROM availability a
+            ) ranked
+            WHERE ranked.rn = 1
+        )
+        SELECT
+            s.number,
+            s.name,
+            s.address,
+            s.latitude,
+            s.longitude,
+            s.bike_stands,
+            latest.available_bikes,
+            latest.available_bike_stands,
+            latest.status,
+            latest."timestamp",
+            latest.requested_at
+        FROM station s
+        JOIN latest ON latest.number = s.number
+    """
+
+    stations: list[dict[str, Any]] = []
+    with psycopg.connect(_psycopg_conninfo(settings.chat_db_url)) as conn:
+        with conn.cursor() as cur:
+            cur.execute(query)
+            rows = cur.fetchall()
+
+    for row in rows:
+        (
+            number,
+            name,
+            address,
+            latitude,
+            longitude,
+            bike_stands,
+            available_bikes,
+            available_bike_stands,
+            status,
+            timestamp,
+            requested_at,
+        ) = row
+        stations.append(
+            {
+                "number": number,
+                "name": name,
+                "address": address,
+                "latitude": float(latitude),
+                "longitude": float(longitude),
+                "distance_m": _distance_m(req.location.lat, req.location.lng, float(latitude), float(longitude)),
+                "bike_stands": bike_stands,
+                "available_bikes": available_bikes,
+                "available_bike_stands": available_bike_stands,
+                "status": status,
+                "timestamp": timestamp.isoformat() if timestamp else None,
+                "requested_at": requested_at.isoformat() if requested_at else None,
+            }
+        )
+
+    stations.sort(key=lambda station: station["distance_m"])
+    nearest = stations[:normalized_limit]
+    if not nearest:
+        return {"error": "station_availability_unavailable", "stations": []}
+
+    return {
+        "location": {
+            "lat": req.location.lat,
+            "lng": req.location.lng,
+            "accuracy_m": req.location.accuracy_m,
+        },
+        "stations": nearest,
+    }
 
 
 tool_functions = {
-    "get_current_user": get_current_user,
+    "get_nearest_station_availability": get_nearest_station_availability,
 }
 
 
-def _log_tool_call(session_id: str, name: str | None, args: dict[str, Any]) -> None:
-    print(f"[tool] start session_id={session_id} name={name} args={args}", flush=True)
+def _tool_message(tool_call: dict[str, Any], req: ChatRequest, settings: Settings) -> ToolMessage:
+    name = tool_call.get("name")
+    args = tool_call.get("args") or {}
+    tool_call_id = tool_call.get("id") or name or "tool_call"
+    try:
+        result = tool_functions[name](req, settings, **args)
+        print(f"[tool] done session_id={req.session_id} name={name}", flush=True)
+    except Exception as exc:
+        print(f"[tool] failed session_id={req.session_id} name={name}: {exc}", flush=True)
+        logger.warning("tool %s failed: %s", name, exc)
+        result = {"error": str(exc)}
+    return ToolMessage(
+        content=json.dumps(result),
+        tool_call_id=tool_call_id,
+        name=name or "unknown",
+    )
 
 
-# --- Agent 主循环 ---
 def _agent_reply(req: ChatRequest, settings: Settings, mem: SQLChatMessageHistory) -> tuple[HumanMessage, str]:
     pending = HumanMessage(content=req.message)
     messages = [AIMessage(content=ASSISTANT_GREETING), *list(mem.messages), pending]
@@ -217,33 +335,14 @@ def _agent_reply(req: ChatRequest, settings: Settings, mem: SQLChatMessageHistor
     for _ in range(MAX_TOOL_STEPS):
         ai = llm_with_tools.invoke(messages)
         messages.append(ai)
-
         tool_calls = getattr(ai, "tool_calls", None) or []
         if not tool_calls:
             reply = ai.content if isinstance(ai.content, str) else json.dumps(ai.content)
             return pending, reply
-
         for tool_call in tool_calls:
-            name = tool_call.get("name")
-            args = tool_call.get("args") or {}
-            tool_call_id = tool_call.get("id") or name or "tool_call"
-            _log_tool_call(req.session_id, name, args)
-            try:
-                result = tool_functions[name](req.session_id, settings, **args)
-                print(f"[tool] done session_id={req.session_id} name={name}", flush=True)
-            except Exception as exc:
-                print(f"[tool] failed session_id={req.session_id} name={name}: {exc}", flush=True)
-                logger.warning("tool %s failed: %s", name, exc)
-                result = {"error": str(exc)}
-            messages.append(
-                ToolMessage(
-                    content=json.dumps(result),
-                    tool_call_id=tool_call_id,
-                    name=name or "unknown",
-                )
-            )
+            messages.append(_tool_message(tool_call, req, settings))
 
-    return pending, "I could not complete the tool workflow within the allowed number of steps."
+    return pending, "I could not complete the station lookup within the allowed number of steps."
 
 
 @app.get("/health", response_model=HealthReply)
@@ -283,7 +382,6 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
 
             for _ in range(MAX_TOOL_STEPS):
                 assistant_message = None
-
                 async for chunk in llm_with_tools.astream(messages):
                     assistant_message = chunk if assistant_message is None else assistant_message + chunk
                     piece = chunk.content if isinstance(chunk.content, str) else json.dumps(chunk.content)
@@ -303,26 +401,8 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
                 tool_calls = getattr(assistant_message, "tool_calls", None) or []
                 if not tool_calls:
                     break
-
                 for tool_call in tool_calls:
-                    name = tool_call.get("name")
-                    args = tool_call.get("args") or {}
-                    tool_call_id = tool_call.get("id") or name or "tool_call"
-                    _log_tool_call(req.session_id, name, args)
-                    try:
-                        result = tool_functions[name](req.session_id, settings, **args)
-                        print(f"[tool] done session_id={req.session_id} name={name}", flush=True)
-                    except Exception as exc:
-                        print(f"[tool] failed session_id={req.session_id} name={name}: {exc}", flush=True)
-                        logger.warning("tool %s failed: %s", name, exc)
-                        result = {"error": str(exc)}
-                    messages.append(
-                        ToolMessage(
-                            content=json.dumps(result),
-                            tool_call_id=tool_call_id,
-                            name=name or "unknown",
-                        )
-                    )
+                    messages.append(_tool_message(tool_call, req, settings))
 
             mem.add_message(pending)
             mem.add_message(AIMessage(content="".join(chunks)))
