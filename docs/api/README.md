@@ -36,7 +36,6 @@ Business error codes use `HTTP_status * 100 + seq` (e.g. `40001` validation, `40
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `POST` | `/api/chat` | Bearer | Send a message (non-streaming) |
 | `POST` | `/api/chat/stream` | Bearer | Send a message (SSE streaming) |
 | `GET`  | `/api/chat/sessions` | Bearer | List user's chat sessions |
 | `GET`  | `/api/chat/sessions/{id}/messages` | Bearer | Get messages for a session |

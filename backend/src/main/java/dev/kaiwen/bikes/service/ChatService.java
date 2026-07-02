@@ -6,7 +6,6 @@ import dev.kaiwen.bikes.config.ChatServiceProperties;
 import dev.kaiwen.bikes.dto.ApiCodes;
 import dev.kaiwen.bikes.dto.request.ChatRequestDTO;
 import dev.kaiwen.bikes.dto.response.ChatMessageVO;
-import dev.kaiwen.bikes.dto.response.ChatReplyVO;
 import dev.kaiwen.bikes.dto.response.ChatSessionVO;
 import dev.kaiwen.bikes.exception.AuthException;
 import dev.kaiwen.bikes.exception.BusinessException;
@@ -52,17 +51,6 @@ public class ChatService {
     private final ChatTitleGenerator chatTitleGenerator;
     private final ChatServiceProperties properties;
     private final ObjectMapper objectMapper;
-
-    public ChatReplyVO chat(String message, String chatId, ChatRequestDTO.LocationDTO location) {
-        int userId = currentUserId();
-        String sessionId = generateSessionId(userId, chatId);
-        ChatSession session = ensureSession(sessionId, userId);
-        ChatReplyVO reply = chatServiceClient.chat(sessionId, userId, message, location);
-        if (session.getTitle() == null) {
-            chatTitleGenerator.generate(sessionId, message);
-        }
-        return reply;
-    }
 
     public void chatStream(
             String message, String chatId, ChatRequestDTO.LocationDTO location, SseEmitter emitter) {

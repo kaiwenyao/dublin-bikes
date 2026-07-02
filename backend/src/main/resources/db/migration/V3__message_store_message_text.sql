@@ -4,7 +4,7 @@
 -- Background: V1__baseline.sql created message_store.message as JSONB, but
 -- LangChain's default SQLChatMessageHistory serializes BaseMessage with
 -- json.dumps(...) and binds the parameter as VARCHAR. PostgreSQL refuses the
--- implicit varchar -> jsonb cast, so every POST /chat (and /chat/stream)
+-- implicit varchar -> jsonb cast, so every POST /chat/stream
 -- failed with:
 --
 --   psycopg.errors.DatatypeMismatch:

@@ -2,7 +2,6 @@ package dev.kaiwen.bikes.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
@@ -21,7 +20,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import dev.kaiwen.bikes.dto.ApiCodes;
 import dev.kaiwen.bikes.dto.response.ChatMessageVO;
-import dev.kaiwen.bikes.dto.response.ChatReplyVO;
 import dev.kaiwen.bikes.dto.response.ChatSessionVO;
 import dev.kaiwen.bikes.exception.BusinessException;
 import dev.kaiwen.bikes.exception.GlobalExceptionHandler;
@@ -57,28 +55,6 @@ class ChatControllerTest {
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .setMessageConverters(TestJson.snakeCaseConverter())
                 .build();
-    }
-
-    @Test
-    void chat_returnsOkEnvelope() throws Exception {
-        when(chatService.chat(
-                        eq("hello"),
-                        eq("default"),
-                        argThat(location -> location != null
-                                && location.lat().equals(53.3498)
-                                && location.lng().equals(-6.2603)
-                                && location.accuracyM().equals(35.0))))
-                .thenReturn(new ChatReplyVO("user_1_chat_default", "hi there"));
-
-        mockMvc.perform(post("/api/chat")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(
-                                "{\"message\":\"hello\",\"chat_id\":\"default\","
-                                        + "\"location\":{\"lat\":53.3498,\"lng\":-6.2603,\"accuracy_m\":35}}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value(ApiCodes.SUCCESS))
-                .andExpect(jsonPath("$.data.chat_id").value("user_1_chat_default"))
-                .andExpect(jsonPath("$.data.reply").value("hi there"));
     }
 
     @Test

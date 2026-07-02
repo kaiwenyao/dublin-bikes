@@ -11,6 +11,7 @@ import {
 import { getAccessToken } from '@/api/token'
 import { getMeAPI } from '@/api/user'
 import { ChatMessageContent } from '@/components/chat/ChatMessageContent'
+import { ChatThinkingIndicator } from '@/components/chat/ChatThinkingIndicator'
 import { Button } from '@/components/ui/button'
 import { needsCurrentLocation } from '@/lib/chat-location-intent'
 import { toast } from 'sonner'
@@ -157,7 +158,6 @@ export default function Chat() {
   const historyRequestIdRef = useRef(0)
   const pendingScrollToBottomRef = useRef(false)
   const submitLockRef = useRef(false)
-  const streamUnlockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isMountedRef = useRef(true)
 
   const handleChatPanelWheel = (e: React.WheelEvent<HTMLDivElement>) => {
@@ -279,31 +279,13 @@ export default function Chat() {
     abortRef.current = null
   }
 
-  const clearStreamUnlockTimer = () => {
-    if (streamUnlockTimerRef.current) {
-      clearTimeout(streamUnlockTimerRef.current)
-      streamUnlockTimerRef.current = null
-    }
-  }
-
-  const scheduleStreamUnlock = () => {
-    clearStreamUnlockTimer()
-    streamUnlockTimerRef.current = setTimeout(() => {
-      if (submitLockRef.current) {
-        finishSending()
-      }
-    }, 2000)
-  }
-
   const finishSending = () => {
-    clearStreamUnlockTimer()
     setSending(false)
     releaseSubmitLock()
   }
 
   const handleSelectSession = async (session: ChatSession) => {
     abortRef.current?.abort()
-    clearStreamUnlockTimer()
     setSending(false)
     releaseSubmitLock()
 
@@ -381,7 +363,6 @@ export default function Chat() {
       setSessions((prev) => prev.filter((s) => s.id !== session.id))
       if (activeSessionId === session.id) {
         abortRef.current?.abort()
-        clearStreamUnlockTimer()
         finishSending()
         handleStartNewChat()
       }
@@ -407,18 +388,6 @@ export default function Chat() {
     const controller = new AbortController()
     abortRef.current = controller
 
-    let resolvedChatId: string
-    try {
-      resolvedChatId = await ensureChatId()
-    } catch {
-      finishSending()
-      return
-    }
-    if (controller.signal.aborted || !isMountedRef.current) {
-      finishSending()
-      return
-    }
-
     const userMessage: Message = {
       id: `user-${Date.now()}`,
       role: 'user',
@@ -436,11 +405,32 @@ export default function Chat() {
     setMessages((prev) => [...prev, userMessage, assistantMessage])
     setInput('')
 
+    const rollbackOptimisticMessages = () => {
+      setMessages((prev) =>
+        prev.filter((m) => m.id !== userMessage.id && m.id !== assistantMessage.id)
+      )
+    }
+
+    let resolvedChatId: string
+    try {
+      resolvedChatId = await ensureChatId()
+    } catch {
+      rollbackOptimisticMessages()
+      finishSending()
+      return
+    }
+    if (controller.signal.aborted || !isMountedRef.current) {
+      rollbackOptimisticMessages()
+      finishSending()
+      return
+    }
+
     try {
       const location = needsCurrentLocation(text)
         ? await getCurrentChatLocation(controller.signal)
         : undefined
       if (controller.signal.aborted || !isMountedRef.current) {
+        rollbackOptimisticMessages()
         finishSending()
         return
       }
@@ -464,7 +454,6 @@ export default function Chat() {
               m.id === assistantId ? { ...m, content: m.content + part } : m
             )
           )
-          scheduleStreamUnlock()
           if (document.visibilityState === 'visible') {
             setTimeout(() => {
               const el = messageListRef.current
@@ -821,11 +810,7 @@ export default function Chat() {
                         {isUserMessage ? 'You' : 'Assistant'}
                       </span>
                       {isStreamingEmpty ? (
-                        <div className="flex gap-1.5">
-                          <span className="h-2 w-2 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:-0.3s]" />
-                          <span className="h-2 w-2 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:-0.15s]" />
-                          <span className="h-2 w-2 rounded-full bg-muted-foreground/60 animate-bounce" />
-                        </div>
+                        <ChatThinkingIndicator />
                       ) : isUserMessage ? (
                         <p className="text-sm leading-relaxed whitespace-pre-wrap break-words text-foreground">
                           {msg.content || '\u00A0'}

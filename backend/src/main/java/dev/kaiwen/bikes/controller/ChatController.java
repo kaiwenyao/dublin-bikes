@@ -3,7 +3,6 @@ package dev.kaiwen.bikes.controller;
 import dev.kaiwen.bikes.dto.ApiResponse;
 import dev.kaiwen.bikes.dto.request.ChatRequestDTO;
 import dev.kaiwen.bikes.dto.response.ChatMessageVO;
-import dev.kaiwen.bikes.dto.response.ChatReplyVO;
 import dev.kaiwen.bikes.dto.response.ChatSessionVO;
 import dev.kaiwen.bikes.service.ChatService;
 import jakarta.validation.Valid;
@@ -26,11 +25,6 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 public class ChatController {
 
     private final ChatService chatService;
-
-    @PostMapping
-    public ApiResponse<ChatReplyVO> chat(@Valid @RequestBody ChatRequestDTO request) {
-        return ApiResponse.ok(chatService.chat(request.message(), request.chatId(), request.location()));
-    }
 
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public ResponseEntity<SseEmitter> chatStream(@Valid @RequestBody ChatRequestDTO request) {

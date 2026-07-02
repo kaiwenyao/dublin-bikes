@@ -39,6 +39,13 @@ ASSISTANT_GREETING = (
     "Hi! I'm your UCDSE assistant. Ask me about bike sharing, stations, "
     "or sustainable mobility—or just say hello."
 )
+TOOL_CALLING_INSTRUCTIONS = (
+    "Tool calling protocol: when you need to call a tool, do not emit "
+    "user-facing content in that assistant turn; return only tool_calls. "
+    "When you emit user-facing content, do not call tools in that same "
+    "assistant turn. After receiving enough information from tools, answer "
+    "the user with content and no tool_calls."
+)
 LOCATION_ATTACHED_INSTRUCTIONS = (
     "The user's current location is attached to this request: "
     "lat={lat}, lng={lng}{accuracy}. For questions about nearby or "
@@ -113,11 +120,6 @@ class ChatRequest(BaseModel):
     user_id: int
     message: str = Field(..., max_length=4000)
     location: GeoLocation | None = None
-
-
-class ChatReply(BaseModel):
-    chat_id: str
-    reply: str
 
 
 class TitleRequest(BaseModel):
@@ -229,13 +231,13 @@ def _memory(session_id: str, settings: Settings) -> SQLChatMessageHistory:
 
 
 @lru_cache  # API key rotation requires container restart (cached client holds old key).
-def _llm(sync: bool = True) -> ChatOpenAI:
+def _llm(streaming: bool) -> ChatOpenAI:
     settings = _require_runtime()
     return ChatOpenAI(
         model=settings.deepseek_model,
         api_key=settings.deepseek_api_key,
         base_url=settings.deepseek_base_url,
-        streaming=not sync,
+        streaming=streaming,
     )
 
 
@@ -388,16 +390,17 @@ def _tool_message(tool_call: dict[str, Any], req: ChatRequest, settings: Setting
 
 def _location_system_message(location: GeoLocation | None) -> SystemMessage:
     if location is None:
-        return SystemMessage(content=LOCATION_MISSING_INSTRUCTIONS)
+        return SystemMessage(content=f"{TOOL_CALLING_INSTRUCTIONS}\n\n{LOCATION_MISSING_INSTRUCTIONS}")
     accuracy = (
         f" (accuracy ~{location.accuracy_m:.0f}m)"
         if location.accuracy_m is not None
         else ""
     )
+    location_instructions = LOCATION_ATTACHED_INSTRUCTIONS.format(
+        lat=f"{location.lat:.5f}", lng=f"{location.lng:.5f}", accuracy=accuracy
+    )
     return SystemMessage(
-        content=LOCATION_ATTACHED_INSTRUCTIONS.format(
-            lat=f"{location.lat:.5f}", lng=f"{location.lng:.5f}", accuracy=accuracy
-        )
+        content=f"{TOOL_CALLING_INSTRUCTIONS}\n\n{location_instructions}"
     )
 
 
@@ -418,43 +421,32 @@ def _build_messages(
     ]
 
 
-def _agent_reply(req: ChatRequest, settings: Settings, mem: SQLChatMessageHistory) -> tuple[HumanMessage, str]:
-    pending = HumanMessage(content=req.message)
-    messages = _build_messages(req, mem, pending)
-    llm_with_tools = _llm(sync=True).bind(tools=tools)
+def _record_assistant_turn(messages: list[BaseMessage], assistant_message: Any) -> list[dict[str, Any]]:
+    tool_calls = getattr(assistant_message, "tool_calls", None) or []
+    messages.append(
+        AIMessage(
+            content=getattr(assistant_message, "content", ""),
+            tool_calls=tool_calls,
+        )
+    )
+    return tool_calls
 
-    for _ in range(MAX_TOOL_STEPS):
-        ai = llm_with_tools.invoke(messages)
-        messages.append(ai)
-        tool_calls = getattr(ai, "tool_calls", None) or []
-        if not tool_calls:
-            reply = ai.content if isinstance(ai.content, str) else json.dumps(ai.content)
-            return pending, reply
-        for tool_call in tool_calls:
-            messages.append(_tool_message(tool_call, req, settings))
 
-    return pending, "I could not complete the station lookup within the allowed number of steps."
+async def _append_tool_messages(
+    messages: list[BaseMessage],
+    tool_calls: list[dict[str, Any]],
+    req: ChatRequest,
+    settings: Settings,
+) -> bool:
+    for tool_call in tool_calls:
+        messages.append(await run_in_threadpool(_tool_message, tool_call, req, settings))
+    return bool(tool_calls)
 
 
 @app.get("/health", response_model=HealthReply)
 def health() -> HealthReply:
     settings = get_settings()
     return HealthReply(status="ok", configured=settings.is_configured)
-
-
-@app.post("/chat", response_model=ChatReply)
-def chat(req: ChatRequest) -> ChatReply:
-    settings = _require_runtime()
-    _ensure_session_row(req.session_id, req.user_id, settings)
-    mem = _memory(req.session_id, settings)
-    try:
-        pending, reply = _agent_reply(req, settings, mem)
-    except Exception:
-        logger.exception("chat failed for session_id=%s", req.session_id)
-        raise
-    mem.add_message(pending)
-    mem.add_message(AIMessage(content=reply))
-    return ChatReply(chat_id=req.session_id, reply=reply)
 
 
 @app.post("/chat/stream")
@@ -469,31 +461,35 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
         persisted = False
         try:
             messages = _build_messages(req, mem, pending)
-            llm_with_tools = _llm(sync=False).bind(tools=tools)
+            llm_with_tools = _llm(streaming=True).bind(tools=tools)
+            has_tool_observation = False
 
             for _ in range(MAX_TOOL_STEPS):
                 assistant_message = None
+                buffer_round_output = req.location is not None and not has_tool_observation
+                round_pieces: list[str] = []
                 async for chunk in llm_with_tools.astream(messages):
                     assistant_message = chunk if assistant_message is None else assistant_message + chunk
                     piece = chunk.content if isinstance(chunk.content, str) else json.dumps(chunk.content)
-                    if piece:
+                    if piece and buffer_round_output:
+                        round_pieces.append(piece)
+                    elif piece:
                         chunks.append(piece)
                         yield {"data": json.dumps({"content": piece})}
 
                 if assistant_message is None:
                     break
 
-                messages.append(
-                    AIMessage(
-                        content=assistant_message.content,
-                        tool_calls=assistant_message.tool_calls,
-                    )
-                )
-                tool_calls = getattr(assistant_message, "tool_calls", None) or []
+                tool_calls = _record_assistant_turn(messages, assistant_message)
                 if not tool_calls:
+                    for piece in round_pieces:
+                        chunks.append(piece)
+                        yield {"data": json.dumps({"content": piece})}
                     break
-                for tool_call in tool_calls:
-                    messages.append(await run_in_threadpool(_tool_message, tool_call, req, settings))
+                has_tool_observation = (
+                    await _append_tool_messages(messages, tool_calls, req, settings)
+                    or has_tool_observation
+                )
 
             mem.add_message(pending)
             mem.add_message(AIMessage(content="".join(chunks)))
@@ -525,7 +521,7 @@ def chat_title(req: TitleRequest) -> TitleReply:
         "output only the title without punctuation: "
         + snippet
     )
-    out = _llm(sync=True).invoke([HumanMessage(content=prompt)])
+    out = _llm(streaming=False).invoke([HumanMessage(content=prompt)])
     title = (out.content or "").strip()[:50]
     return TitleReply(title=title)
 
