@@ -10,6 +10,7 @@ import {
 } from '@/api/chat'
 import { getAccessToken } from '@/api/token'
 import { getMeAPI } from '@/api/user'
+import { ChatMessageContent } from '@/components/chat/ChatMessageContent'
 import { Button } from '@/components/ui/button'
 import { needsCurrentLocation } from '@/lib/chat-location-intent'
 import { toast } from 'sonner'
@@ -825,14 +826,12 @@ export default function Chat() {
                           <span className="h-2 w-2 rounded-full bg-muted-foreground/60 animate-bounce [animation-delay:-0.15s]" />
                           <span className="h-2 w-2 rounded-full bg-muted-foreground/60 animate-bounce" />
                         </div>
-                      ) : (
-                        <p
-                          className={`text-sm leading-relaxed whitespace-pre-wrap break-words ${
-                            isUserMessage ? 'text-foreground' : 'text-foreground'
-                          }`}
-                        >
+                      ) : isUserMessage ? (
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap break-words text-foreground">
                           {msg.content || '\u00A0'}
                         </p>
+                      ) : (
+                        <ChatMessageContent content={msg.content} />
                       )}
                     </div>
                   </div>
