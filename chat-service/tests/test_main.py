@@ -133,32 +133,20 @@ def test_map_messages_maps_roles_and_serializes_list_content():
     ]
 
 
-@patch("main.psycopg.connect")
-def test_get_nearest_station_availability_ranks_by_distance(mock_connect):
+@patch("main._db_connection")
+def test_get_nearest_station_availability_pushes_ranking_to_sql(mock_db):
     conn = MagicMock()
     cursor = MagicMock()
-    mock_connect.return_value.__enter__.return_value = conn
+    mock_db.return_value.__enter__.return_value = conn
     conn.cursor.return_value.__enter__.return_value = cursor
     cursor.fetchall.return_value = [
-        (
-            1,
-            "Far Station",
-            "Far Address",
-            53.3600,
-            -6.2800,
-            20,
-            3,
-            17,
-            "OPEN",
-            datetime(2026, 1, 1, 10, 0),
-            datetime(2026, 1, 1, 10, 1),
-        ),
         (
             2,
             "Near Station",
             "Near Address",
             53.3499,
             -6.2604,
+            14,
             30,
             8,
             22,
@@ -176,9 +164,56 @@ def test_get_nearest_station_availability_ranks_by_distance(mock_connect):
 
     result = get_nearest_station_availability(req, _configured_settings(), limit=1)
 
+    sql, params = cursor.execute.call_args[0]
+    assert params == {"lat": 53.3498, "lng": -6.2603, "limit": 1}
+    assert "CROSS JOIN LATERAL" in sql
+    assert "ORDER BY distance_m" in sql
+    assert "LIMIT %(limit)s" in sql
+    assert result["stations"][0]["distance_m"] == 14
     assert result["stations"][0]["number"] == 2
-    assert result["stations"][0]["available_bikes"] == 8
-    assert result["stations"][0]["distance_m"] < 50
+
+
+@pytest.mark.parametrize("raw_limit,expected", [(99, 5), (0, 1), (-3, 1)])
+@patch("main._db_connection")
+def test_get_nearest_station_availability_clamps_limit(mock_db, raw_limit, expected):
+    conn = MagicMock()
+    cursor = MagicMock()
+    mock_db.return_value.__enter__.return_value = conn
+    conn.cursor.return_value.__enter__.return_value = cursor
+    cursor.fetchall.return_value = []
+    req = ChatRequest(
+        session_id="sess-1",
+        user_id=42,
+        message="nearest station",
+        location={"lat": 53.3498, "lng": -6.2603},
+    )
+
+    get_nearest_station_availability(req, _configured_settings(), limit=raw_limit)
+
+    assert cursor.execute.call_args[0][1]["limit"] == expected
+
+
+@patch("main.ConnectionPool")
+def test_db_pool_is_lazy_and_cached(mock_pool_cls):
+    import main
+
+    test_url = "postgresql://user:pass@localhost:5432/chat"
+    main._db_pools = {}
+    try:
+        main._db_pool(test_url)
+        main._db_pool(test_url)
+
+        assert mock_pool_cls.call_count == 1
+        kwargs = mock_pool_cls.call_args.kwargs
+        assert kwargs["conninfo"] == test_url
+        assert kwargs["min_size"] == 1
+        assert kwargs["max_size"] == 4
+        assert kwargs["max_idle"] == 300
+        assert kwargs["timeout"] == 10
+        assert kwargs["open"] is True
+        assert kwargs["kwargs"] == {"application_name": "chat-service"}
+    finally:
+        main._db_pools = {}
 
 
 def test_build_messages_includes_location_system_message_when_present():

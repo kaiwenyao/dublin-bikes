@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
-import math
+import threading
+from contextlib import AbstractContextManager
 from functools import lru_cache
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-import psycopg
 from fastapi import FastAPI, HTTPException
 from langchain_community.chat_message_histories import SQLChatMessageHistory
 from langchain_core.messages import (
@@ -20,15 +20,21 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_openai import ChatOpenAI
+from psycopg import Connection
+from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sse_starlette.sse import EventSourceResponse
+from starlette.concurrency import run_in_threadpool
 
 logger = logging.getLogger(__name__)
 
 ROLE_MAP = {"human": "user", "ai": "assistant"}
 MAX_TOOL_STEPS = 4
-EARTH_RADIUS_M = 6_371_000
+DB_POOL_MIN_SIZE = 1
+DB_POOL_MAX_SIZE = 4
+DB_POOL_MAX_IDLE_S = 300  # recycle idle conns before NAT/Supabase reaping
+DB_POOL_CHECKOUT_TIMEOUT_S = 10  # fail a request fast instead of freezing 30s
 ASSISTANT_GREETING = (
     "Hi! I'm your UCDSE assistant. Ask me about bike sharing, stations, "
     "or sustainable mobility—or just say hello."
@@ -146,7 +152,7 @@ def _require_runtime() -> Settings:
 
 
 def _psycopg_conninfo(db_url: str) -> str:
-    """Normalize CHAT_DB_URL for psycopg.connect (libpq), not SQLAlchemy.
+    """Normalize CHAT_DB_URL for the libpq connection pool, not SQLAlchemy.
 
     LangChain accepts postgresql+psycopg://…; psycopg rejects the +driver suffix.
     Also repairs a bare ?sslmode query flag (no value), which Supabase URLs sometimes have.
@@ -163,13 +169,45 @@ def _psycopg_conninfo(db_url: str) -> str:
     return urlunparse(parsed._replace(scheme=scheme, query=urlencode(fixed_query)))
 
 
+_db_pool_lock = threading.Lock()
+_db_pools: dict[str, ConnectionPool] = {}
+
+
+def _db_pool(db_url: str) -> ConnectionPool:
+    """Per-URL connection pool; double-checked lock because concurrent cold-start
+    threads must not each construct (and leak) a ConnectionPool for the same URL."""
+    conninfo = _psycopg_conninfo(db_url)
+    pool = _db_pools.get(conninfo)
+    if pool is None:
+        with _db_pool_lock:
+            pool = _db_pools.get(conninfo)
+            if pool is None:
+                pool = ConnectionPool(
+                    conninfo=conninfo,
+                    min_size=DB_POOL_MIN_SIZE,
+                    max_size=DB_POOL_MAX_SIZE,
+                    max_idle=DB_POOL_MAX_IDLE_S,
+                    timeout=DB_POOL_CHECKOUT_TIMEOUT_S,
+                    check=ConnectionPool.check_connection,
+                    kwargs={"application_name": "chat-service"},
+                    open=True,
+                )
+                _db_pools[conninfo] = pool
+    return pool
+
+
+def _db_connection(db_url: str) -> AbstractContextManager[Connection[Any]]:
+    """Check out a pooled connection; single seam shared by all DB call sites."""
+    return _db_pool(db_url).connection()
+
+
 def _ensure_session_row(session_id: str, user_id: int, settings: Settings) -> None:
     """Upsert sessions row so message_store FK (V2 migration) is satisfied.
 
     Spring normally owns this table; when testing chat-service directly (e.g. Postman),
     we still need a parent session row before LangChain writes to message_store.
     """
-    with psycopg.connect(_psycopg_conninfo(settings.chat_db_url)) as conn:
+    with _db_connection(settings.chat_db_url) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -180,7 +218,7 @@ def _ensure_session_row(session_id: str, user_id: int, settings: Settings) -> No
                 """,
                 (session_id, user_id),
             )
-        conn.commit()
+        # No explicit commit: pool.connection() commits on clean context exit.
 
 
 def _memory(session_id: str, settings: Settings) -> SQLChatMessageHistory:
@@ -212,18 +250,6 @@ def _map_messages(messages: list[Any]) -> list[MessageItem]:
     return items
 
 
-def _distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> int:
-    lat1_rad = math.radians(lat1)
-    lat2_rad = math.radians(lat2)
-    delta_lat = math.radians(lat2 - lat1)
-    delta_lng = math.radians(lng2 - lng1)
-    a = (
-        math.sin(delta_lat / 2) ** 2
-        + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lng / 2) ** 2
-    )
-    return round(EARTH_RADIUS_M * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
-
-
 def get_nearest_station_availability(
     req: ChatRequest,
     settings: Settings,
@@ -241,25 +267,25 @@ def get_nearest_station_availability(
         normalized_limit = 3
 
     query = """
-        WITH latest AS (
-            SELECT ranked.*
-            FROM (
-                SELECT
-                    a.*,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY a.number
-                        ORDER BY a."timestamp" DESC, a.id DESC
-                    ) AS rn
-                FROM availability a
-            ) ranked
-            WHERE ranked.rn = 1
-        )
         SELECT
             s.number,
             s.name,
             s.address,
             s.latitude,
             s.longitude,
+            -- Haversine formula; 6371000 = Earth mean radius in metres.
+            ROUND(
+                2 * 6371000 * ASIN(
+                    SQRT(
+                        LEAST(
+                            1.0,
+                            POWER(SIN(RADIANS(s.latitude - %(lat)s) / 2), 2)
+                            + COS(RADIANS(%(lat)s)) * COS(RADIANS(s.latitude))
+                              * POWER(SIN(RADIANS(s.longitude - %(lng)s) / 2), 2)
+                        )
+                    )
+                )
+            )::int AS distance_m,
             s.bike_stands,
             latest.available_bikes,
             latest.available_bike_stands,
@@ -267,13 +293,29 @@ def get_nearest_station_availability(
             latest."timestamp",
             latest.requested_at
         FROM station s
-        JOIN latest ON latest.number = s.number
+        CROSS JOIN LATERAL (
+            SELECT
+                a.available_bikes,
+                a.available_bike_stands,
+                a.status,
+                a."timestamp",
+                a.requested_at
+            FROM availability a
+            WHERE a.number = s.number
+            ORDER BY a."timestamp" DESC, a.id DESC
+            LIMIT 1
+        ) latest
+        ORDER BY distance_m, s.number
+        LIMIT %(limit)s
     """
 
     stations: list[dict[str, Any]] = []
-    with psycopg.connect(_psycopg_conninfo(settings.chat_db_url)) as conn:
+    with _db_connection(settings.chat_db_url) as conn:
         with conn.cursor() as cur:
-            cur.execute(query)
+            cur.execute(
+                query,
+                {"lat": req.location.lat, "lng": req.location.lng, "limit": normalized_limit},
+            )
             rows = cur.fetchall()
 
     for row in rows:
@@ -283,6 +325,7 @@ def get_nearest_station_availability(
             address,
             latitude,
             longitude,
+            distance_m,
             bike_stands,
             available_bikes,
             available_bike_stands,
@@ -297,7 +340,7 @@ def get_nearest_station_availability(
                 "address": address,
                 "latitude": float(latitude),
                 "longitude": float(longitude),
-                "distance_m": _distance_m(req.location.lat, req.location.lng, float(latitude), float(longitude)),
+                "distance_m": distance_m,
                 "bike_stands": bike_stands,
                 "available_bikes": available_bikes,
                 "available_bike_stands": available_bike_stands,
@@ -307,9 +350,7 @@ def get_nearest_station_availability(
             }
         )
 
-    stations.sort(key=lambda station: station["distance_m"])
-    nearest = stations[:normalized_limit]
-    if not nearest:
+    if not stations:
         return {"error": "station_availability_unavailable", "stations": []}
 
     return {
@@ -318,7 +359,7 @@ def get_nearest_station_availability(
             "lng": req.location.lng,
             "accuracy_m": req.location.accuracy_m,
         },
-        "stations": nearest,
+        "stations": stations,
     }
 
 
@@ -419,7 +460,7 @@ def chat(req: ChatRequest) -> ChatReply:
 @app.post("/chat/stream")
 async def chat_stream(req: ChatRequest) -> EventSourceResponse:
     settings = _require_runtime()
-    _ensure_session_row(req.session_id, req.user_id, settings)
+    await run_in_threadpool(_ensure_session_row, req.session_id, req.user_id, settings)
     mem = _memory(req.session_id, settings)
     pending = HumanMessage(content=req.message)
 
@@ -452,7 +493,7 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
                 if not tool_calls:
                     break
                 for tool_call in tool_calls:
-                    messages.append(_tool_message(tool_call, req, settings))
+                    messages.append(await run_in_threadpool(_tool_message, tool_call, req, settings))
 
             mem.add_message(pending)
             mem.add_message(AIMessage(content="".join(chunks)))
