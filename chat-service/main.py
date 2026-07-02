@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+from contextlib import AbstractContextManager
 from functools import lru_cache
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -18,15 +20,21 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_openai import ChatOpenAI
+from psycopg import Connection
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sse_starlette.sse import EventSourceResponse
+from starlette.concurrency import run_in_threadpool
 
 logger = logging.getLogger(__name__)
 
 ROLE_MAP = {"human": "user", "ai": "assistant"}
 MAX_TOOL_STEPS = 4
+DB_POOL_MIN_SIZE = 1
+DB_POOL_MAX_SIZE = 4
+DB_POOL_MAX_IDLE_S = 300  # recycle idle conns before NAT/Supabase reaping
+DB_POOL_CHECKOUT_TIMEOUT_S = 10  # fail a request fast instead of freezing 30s
 ASSISTANT_GREETING = (
     "Hi! I'm your UCDSE assistant. Ask me about bike sharing, stations, "
     "or sustainable mobility—or just say hello."
@@ -161,19 +169,33 @@ def _psycopg_conninfo(db_url: str) -> str:
     return urlunparse(parsed._replace(scheme=scheme, query=urlencode(fixed_query)))
 
 
-@lru_cache  # DB URL rotation requires container restart (cached pool holds old conninfo).
+_db_pool_lock = threading.Lock()
+_db_pool_instance: ConnectionPool | None = None
+
+
 def _db_pool() -> ConnectionPool:
-    settings = _require_runtime()
-    return ConnectionPool(
-        conninfo=_psycopg_conninfo(settings.chat_db_url),
-        min_size=1,
-        max_size=4,
-        max_idle=300,
-        open=True,
-    )
+    """Singleton pool; double-checked lock because concurrent cold-start
+    threads must not each construct (and leak) a ConnectionPool.
+    DB URL rotation requires container restart (pool holds old conninfo)."""
+    global _db_pool_instance
+    if _db_pool_instance is None:
+        with _db_pool_lock:
+            if _db_pool_instance is None:
+                settings = _require_runtime()
+                _db_pool_instance = ConnectionPool(
+                    conninfo=_psycopg_conninfo(settings.chat_db_url),
+                    min_size=DB_POOL_MIN_SIZE,
+                    max_size=DB_POOL_MAX_SIZE,
+                    max_idle=DB_POOL_MAX_IDLE_S,
+                    timeout=DB_POOL_CHECKOUT_TIMEOUT_S,
+                    check=ConnectionPool.check_connection,
+                    kwargs={"application_name": "chat-service"},
+                    open=True,
+                )
+    return _db_pool_instance
 
 
-def _db_connection():
+def _db_connection() -> AbstractContextManager[Connection[Any]]:
     """Check out a pooled connection; single seam shared by all DB call sites."""
     return _db_pool().connection()
 
@@ -195,7 +217,7 @@ def _ensure_session_row(session_id: str, user_id: int, settings: Settings) -> No
                 """,
                 (session_id, user_id),
             )
-        conn.commit()
+        # No explicit commit: pool.connection() commits on clean context exit.
 
 
 def _memory(session_id: str, settings: Settings) -> SQLChatMessageHistory:
@@ -437,7 +459,7 @@ def chat(req: ChatRequest) -> ChatReply:
 @app.post("/chat/stream")
 async def chat_stream(req: ChatRequest) -> EventSourceResponse:
     settings = _require_runtime()
-    _ensure_session_row(req.session_id, req.user_id, settings)
+    await run_in_threadpool(_ensure_session_row, req.session_id, req.user_id, settings)
     mem = _memory(req.session_id, settings)
     pending = HumanMessage(content=req.message)
 
@@ -470,7 +492,7 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
                 if not tool_calls:
                     break
                 for tool_call in tool_calls:
-                    messages.append(_tool_message(tool_call, req, settings))
+                    messages.append(await run_in_threadpool(_tool_message, tool_call, req, settings))
 
             mem.add_message(pending)
             mem.add_message(AIMessage(content="".join(chunks)))

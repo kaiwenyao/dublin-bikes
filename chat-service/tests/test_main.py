@@ -198,7 +198,7 @@ def test_get_nearest_station_availability_clamps_limit(mock_db, raw_limit, expec
 def test_db_pool_is_lazy_and_cached(_mock_runtime, mock_pool_cls):
     import main
 
-    main._db_pool.cache_clear()
+    main._db_pool_instance = None
     try:
         main._db_pool()
         main._db_pool()
@@ -208,8 +208,12 @@ def test_db_pool_is_lazy_and_cached(_mock_runtime, mock_pool_cls):
         assert kwargs["conninfo"] == "postgresql://user:pass@localhost:5432/chat"
         assert kwargs["min_size"] == 1
         assert kwargs["max_size"] == 4
+        assert kwargs["max_idle"] == 300
+        assert kwargs["timeout"] == 10
+        assert kwargs["open"] is True
+        assert kwargs["kwargs"] == {"application_name": "chat-service"}
     finally:
-        main._db_pool.cache_clear()
+        main._db_pool_instance = None
 
 
 def test_build_messages_includes_location_system_message_when_present():
