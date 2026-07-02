@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useRef, useState } from 'react'
+import { Suspense, useLayoutEffect, useState } from 'react'
 import { Outlet, useLocation, useNavigation } from 'react-router-dom'
 import { NavigationProvider, useNavigationIntent } from '@/contexts/NavigationContext'
 import Header from './Header'
@@ -10,32 +10,26 @@ function PageTransition() {
   const location = useLocation()
   const navigation = useNavigation()
   const { pendingPath } = useNavigationIntent()
-  const [contentReady, setContentReady] = useState(true)
-  const isFirstRender = useRef(true)
+  const [revealedPathname, setRevealedPathname] = useState(location.pathname)
 
   const skeletonPath = pendingPath ?? location.pathname
   const isRoutePending =
     navigation.state === 'loading' ||
     (pendingPath !== null && pendingPath !== location.pathname)
 
-  useEffect(() => {
-    if (isFirstRender.current) {
-      isFirstRender.current = false
-      return
-    }
-    setContentReady(false)
-  }, [location.pathname])
+  const isContentRevealed =
+    !isRoutePending && revealedPathname === location.pathname
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (isRoutePending) return
 
     const frameId = requestAnimationFrame(() => {
-      requestAnimationFrame(() => setContentReady(true))
+      requestAnimationFrame(() => setRevealedPathname(location.pathname))
     })
     return () => cancelAnimationFrame(frameId)
   }, [isRoutePending, location.pathname])
 
-  const showSkeleton = isRoutePending || !contentReady
+  const showSkeleton = !isContentRevealed
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
