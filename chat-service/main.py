@@ -12,7 +12,13 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 import psycopg
 from fastapi import FastAPI, HTTPException
 from langchain_community.chat_message_histories import SQLChatMessageHistory
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -26,6 +32,18 @@ EARTH_RADIUS_M = 6_371_000
 ASSISTANT_GREETING = (
     "Hi! I'm your UCDSE assistant. Ask me about bike sharing, stations, "
     "or sustainable mobility—or just say hello."
+)
+LOCATION_ATTACHED_INSTRUCTIONS = (
+    "The user's current location is attached to this request: "
+    "lat={lat}, lng={lng}{accuracy}. For questions about nearby or "
+    "nearest stations, call get_nearest_station_availability; it already "
+    "uses this attached location, so never say you cannot access the "
+    "user's location."
+)
+LOCATION_MISSING_INSTRUCTIONS = (
+    "No user location is attached to this request. If the user asks about "
+    "nearby or nearest stations, ask them to enable location sharing in "
+    "the app instead of guessing."
 )
 
 tools = [
@@ -327,9 +345,41 @@ def _tool_message(tool_call: dict[str, Any], req: ChatRequest, settings: Setting
     )
 
 
+def _location_system_message(location: GeoLocation | None) -> SystemMessage:
+    if location is None:
+        return SystemMessage(content=LOCATION_MISSING_INSTRUCTIONS)
+    accuracy = (
+        f" (accuracy ~{location.accuracy_m:.0f}m)"
+        if location.accuracy_m is not None
+        else ""
+    )
+    return SystemMessage(
+        content=LOCATION_ATTACHED_INSTRUCTIONS.format(
+            lat=f"{location.lat:.5f}", lng=f"{location.lng:.5f}", accuracy=accuracy
+        )
+    )
+
+
+def _build_messages(
+    req: ChatRequest, mem: SQLChatMessageHistory, pending: HumanMessage
+) -> list[BaseMessage]:
+    """Assemble the per-call prompt for the LLM.
+
+    The leading SystemMessage carries request-scoped location context and must
+    never be persisted to mem — history writes stay limited to the pending
+    HumanMessage and the final AIMessage at the call sites.
+    """
+    return [
+        _location_system_message(req.location),
+        AIMessage(content=ASSISTANT_GREETING),
+        *list(mem.messages),
+        pending,
+    ]
+
+
 def _agent_reply(req: ChatRequest, settings: Settings, mem: SQLChatMessageHistory) -> tuple[HumanMessage, str]:
     pending = HumanMessage(content=req.message)
-    messages = [AIMessage(content=ASSISTANT_GREETING), *list(mem.messages), pending]
+    messages = _build_messages(req, mem, pending)
     llm_with_tools = _llm(sync=True).bind(tools=tools)
 
     for _ in range(MAX_TOOL_STEPS):
@@ -377,7 +427,7 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
         chunks: list[str] = []
         persisted = False
         try:
-            messages = [AIMessage(content=ASSISTANT_GREETING), *list(mem.messages), pending]
+            messages = _build_messages(req, mem, pending)
             llm_with_tools = _llm(sync=False).bind(tools=tools)
 
             for _ in range(MAX_TOOL_STEPS):
