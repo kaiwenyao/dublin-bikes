@@ -194,18 +194,18 @@ def test_get_nearest_station_availability_clamps_limit(mock_db, raw_limit, expec
 
 
 @patch("main.ConnectionPool")
-@patch("main._require_runtime", return_value=_configured_settings())
-def test_db_pool_is_lazy_and_cached(_mock_runtime, mock_pool_cls):
+def test_db_pool_is_lazy_and_cached(mock_pool_cls):
     import main
 
-    main._db_pool_instance = None
+    test_url = "postgresql://user:pass@localhost:5432/chat"
+    main._db_pools = {}
     try:
-        main._db_pool()
-        main._db_pool()
+        main._db_pool(test_url)
+        main._db_pool(test_url)
 
         assert mock_pool_cls.call_count == 1
         kwargs = mock_pool_cls.call_args.kwargs
-        assert kwargs["conninfo"] == "postgresql://user:pass@localhost:5432/chat"
+        assert kwargs["conninfo"] == test_url
         assert kwargs["min_size"] == 1
         assert kwargs["max_size"] == 4
         assert kwargs["max_idle"] == 300
@@ -213,7 +213,7 @@ def test_db_pool_is_lazy_and_cached(_mock_runtime, mock_pool_cls):
         assert kwargs["open"] is True
         assert kwargs["kwargs"] == {"application_name": "chat-service"}
     finally:
-        main._db_pool_instance = None
+        main._db_pools = {}
 
 
 def test_build_messages_includes_location_system_message_when_present():

@@ -170,20 +170,20 @@ def _psycopg_conninfo(db_url: str) -> str:
 
 
 _db_pool_lock = threading.Lock()
-_db_pool_instance: ConnectionPool | None = None
+_db_pools: dict[str, ConnectionPool] = {}
 
 
-def _db_pool() -> ConnectionPool:
-    """Singleton pool; double-checked lock because concurrent cold-start
-    threads must not each construct (and leak) a ConnectionPool.
-    DB URL rotation requires container restart (pool holds old conninfo)."""
-    global _db_pool_instance
-    if _db_pool_instance is None:
+def _db_pool(db_url: str) -> ConnectionPool:
+    """Per-URL connection pool; double-checked lock because concurrent cold-start
+    threads must not each construct (and leak) a ConnectionPool for the same URL."""
+    conninfo = _psycopg_conninfo(db_url)
+    pool = _db_pools.get(conninfo)
+    if pool is None:
         with _db_pool_lock:
-            if _db_pool_instance is None:
-                settings = _require_runtime()
-                _db_pool_instance = ConnectionPool(
-                    conninfo=_psycopg_conninfo(settings.chat_db_url),
+            pool = _db_pools.get(conninfo)
+            if pool is None:
+                pool = ConnectionPool(
+                    conninfo=conninfo,
                     min_size=DB_POOL_MIN_SIZE,
                     max_size=DB_POOL_MAX_SIZE,
                     max_idle=DB_POOL_MAX_IDLE_S,
@@ -192,12 +192,13 @@ def _db_pool() -> ConnectionPool:
                     kwargs={"application_name": "chat-service"},
                     open=True,
                 )
-    return _db_pool_instance
+                _db_pools[conninfo] = pool
+    return pool
 
 
-def _db_connection() -> AbstractContextManager[Connection[Any]]:
+def _db_connection(db_url: str) -> AbstractContextManager[Connection[Any]]:
     """Check out a pooled connection; single seam shared by all DB call sites."""
-    return _db_pool().connection()
+    return _db_pool(db_url).connection()
 
 
 def _ensure_session_row(session_id: str, user_id: int, settings: Settings) -> None:
@@ -206,7 +207,7 @@ def _ensure_session_row(session_id: str, user_id: int, settings: Settings) -> No
     Spring normally owns this table; when testing chat-service directly (e.g. Postman),
     we still need a parent session row before LangChain writes to message_store.
     """
-    with _db_connection() as conn:
+    with _db_connection(settings.chat_db_url) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -309,7 +310,7 @@ def get_nearest_station_availability(
     """
 
     stations: list[dict[str, Any]] = []
-    with _db_connection() as conn:
+    with _db_connection(settings.chat_db_url) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 query,
