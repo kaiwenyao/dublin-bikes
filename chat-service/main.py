@@ -12,7 +12,7 @@ import httpx
 import psycopg
 from fastapi import FastAPI, HTTPException
 from langchain_community.chat_message_histories import SQLChatMessageHistory
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -22,30 +22,9 @@ logger = logging.getLogger(__name__)
 
 ROLE_MAP = {"human": "user", "ai": "assistant"}
 MAX_TOOL_STEPS = 4
-SYSTEM_INSTRUCTIONS = (
-    "You are the UCDSE assistant for Dublin Bikes. For questions asking what you can do, "
-    "describe only Dublin bike sharing and station information, sustainable mobility or "
-    "route advice, and bilingual general chat. Keep capability answers concise and do "
-    "not add caveats or unrelated capability categories."
-)
 ASSISTANT_GREETING = (
     "Hi! I'm your UCDSE assistant. Ask me about bike sharing, stations, "
     "or sustainable mobility—or just say hello."
-)
-CAPABILITY_QUESTION_MARKERS = (
-    "what can you do",
-    "what are your capabilities",
-    "your capabilities",
-    "what do you do",
-    "how can you help",
-    "你有什么能力",
-    "你有什么功能",
-    "你能做什么",
-    "你可以做什么",
-    "你会什么",
-    "你能帮我什么",
-    "介绍一下你的能力",
-    "介绍你的能力",
 )
 
 # --- 工具描述 ---
@@ -55,10 +34,9 @@ tools = [
         "function": {
             "name": "get_current_user",
             "description": (
-                "Return the current session owner's id and email. Use only when the "
-                "latest user message directly requests their own id, email, or account "
-                "details. Never use for greetings, capability/about/help requests, "
-                "bike or station questions, mobility advice, or general chat."
+                "Fetch the current session owner's id and email. Call only for direct "
+                "requests like 'what is my id?' or 'what is my email?'. For all other "
+                "messages, ignore this function."
             ),
             "parameters": {
                 "type": "object",
@@ -208,27 +186,6 @@ def _map_messages(messages: list[Any]) -> list[MessageItem]:
     return items
 
 
-def _is_capability_question(message: str) -> bool:
-    normalized = " ".join(message.lower().split())
-    return any(marker in normalized for marker in CAPABILITY_QUESTION_MARKERS)
-
-
-def _messages_for_turn(mem: SQLChatMessageHistory, pending: HumanMessage) -> list[Any]:
-    return [
-        SystemMessage(content=SYSTEM_INSTRUCTIONS),
-        AIMessage(content=ASSISTANT_GREETING),
-        *list(mem.messages),
-        pending,
-    ]
-
-
-def _llm_for_message(message: str, sync: bool) -> Any:
-    llm = _llm(sync=sync)
-    if _is_capability_question(message):
-        return llm
-    return llm.bind(tools=tools)
-
-
 # --- 工具实现 ---
 def get_current_user(session_id: str, settings: Settings) -> dict[str, Any]:
     if not settings.ai_service_token:
@@ -254,11 +211,11 @@ def _log_tool_call(session_id: str, name: str | None, args: dict[str, Any]) -> N
 # --- Agent 主循环 ---
 def _agent_reply(req: ChatRequest, settings: Settings, mem: SQLChatMessageHistory) -> tuple[HumanMessage, str]:
     pending = HumanMessage(content=req.message)
-    messages = _messages_for_turn(mem, pending)
-    llm_for_turn = _llm_for_message(req.message, sync=True)
+    messages = [AIMessage(content=ASSISTANT_GREETING), *list(mem.messages), pending]
+    llm_with_tools = _llm(sync=True).bind(tools=tools)
 
     for _ in range(MAX_TOOL_STEPS):
-        ai = llm_for_turn.invoke(messages)
+        ai = llm_with_tools.invoke(messages)
         messages.append(ai)
 
         tool_calls = getattr(ai, "tool_calls", None) or []
@@ -321,13 +278,13 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
         chunks: list[str] = []
         persisted = False
         try:
-            messages = _messages_for_turn(mem, pending)
-            llm_for_turn = _llm_for_message(req.message, sync=False)
+            messages = [AIMessage(content=ASSISTANT_GREETING), *list(mem.messages), pending]
+            llm_with_tools = _llm(sync=False).bind(tools=tools)
 
             for _ in range(MAX_TOOL_STEPS):
                 assistant_message = None
 
-                async for chunk in llm_for_turn.astream(messages):
+                async for chunk in llm_with_tools.astream(messages):
                     assistant_message = chunk if assistant_message is None else assistant_message + chunk
                     piece = chunk.content if isinstance(chunk.content, str) else json.dumps(chunk.content)
                     if piece:

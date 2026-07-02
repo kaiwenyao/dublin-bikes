@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from pydantic import ValidationError
 
 from main import (
@@ -16,9 +16,7 @@ from main import (
     HealthReply,
     MessageItem,
     Settings,
-    SYSTEM_INSTRUCTIONS,
     TitleReply,
-    _is_capability_question,
     _map_messages,
     _psycopg_conninfo,
     app,
@@ -72,21 +70,6 @@ def test_health_returns_ok():
 def test_chat_request_accepts_valid_message():
     req = ChatRequest(session_id="sess-1", user_id=42, message="Hello")
     assert req.message == "Hello"
-
-
-def test_current_user_tool_description_discourages_proactive_lookup():
-    description = tools[0]["function"]["description"]
-    assert "Use only" in description
-    assert "directly requests" in description
-    assert "capability/about/help requests" in description
-    assert "Do not proactively" not in description
-    assert "Do not mention" not in description
-
-
-def test_capability_question_detection_supports_chinese_and_english():
-    assert _is_capability_question("请问你有什么能力？")
-    assert _is_capability_question("What can you do?")
-    assert not _is_capability_question("what is my email?")
 
 
 def test_psycopg_conninfo_strips_sqlalchemy_driver_and_fixes_sslmode():
@@ -147,45 +130,14 @@ def test_chat_persists_human_and_ai_on_success(
     mock_llm.return_value.bind.assert_called_once_with(tools=tools)
     bound.invoke.assert_called_once()
     sent_messages = bound.invoke.call_args[0][0]
-    assert isinstance(sent_messages[0], SystemMessage)
-    assert sent_messages[0].content == SYSTEM_INSTRUCTIONS
-    assert isinstance(sent_messages[1], AIMessage)
-    assert sent_messages[1].content == ASSISTANT_GREETING
+    assert isinstance(sent_messages[0], AIMessage)
+    assert sent_messages[0].content == ASSISTANT_GREETING
     assert mem.add_message.call_count == 2
     human, ai = mem.add_message.call_args_list[0][0][0], mem.add_message.call_args_list[1][0][0]
     assert isinstance(human, HumanMessage)
     assert human.content == "hello"
     assert isinstance(ai, AIMessage)
     assert ai.content == "assistant reply"
-
-
-@patch("main._ensure_session_row")
-@patch("main._memory")
-@patch("main._llm")
-@patch("main._require_runtime", return_value=_configured_settings())
-def test_chat_capability_question_does_not_bind_tools(
-    _mock_runtime, mock_llm, mock_memory, _mock_ensure_session
-):
-    mem = MagicMock()
-    mem.messages = []
-    mock_memory.return_value = mem
-    mock_llm.return_value.invoke.return_value = AIMessage(
-        content="I can help with bike sharing, stations, mobility advice, and chat."
-    )
-
-    response = client.post(
-        "/chat",
-        json={"session_id": "sess-1", "user_id": 42, "message": "请问你有什么能力？"},
-    )
-
-    assert response.status_code == 200
-    assert "bike sharing" in response.json()["reply"]
-    mock_llm.return_value.bind.assert_not_called()
-    sent_messages = mock_llm.return_value.invoke.call_args[0][0]
-    assert isinstance(sent_messages[0], SystemMessage)
-    assert sent_messages[0].content == SYSTEM_INSTRUCTIONS
-    assert isinstance(sent_messages[1], AIMessage)
-    assert sent_messages[1].content == ASSISTANT_GREETING
 
 
 @patch.dict(
@@ -310,10 +262,8 @@ def test_chat_stream_emits_chunks_and_done(
     assert any('{"content": "Hel"}' in c for c in chunks)
     assert any('{"content": "lo"}' in c for c in chunks)
     assert any(c.endswith("[DONE]") for c in chunks)
-    assert isinstance(bound.stream_messages[0][0], SystemMessage)
-    assert bound.stream_messages[0][0].content == SYSTEM_INSTRUCTIONS
-    assert isinstance(bound.stream_messages[0][1], AIMessage)
-    assert bound.stream_messages[0][1].content == ASSISTANT_GREETING
+    assert isinstance(bound.stream_messages[0][0], AIMessage)
+    assert bound.stream_messages[0][0].content == ASSISTANT_GREETING
     assert mem.add_message.call_count == 2
     ai = mem.add_message.call_args_list[1][0][0]
     assert isinstance(ai, AIMessage)
