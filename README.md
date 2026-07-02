@@ -96,8 +96,9 @@ cp frontend/.env.example           frontend/.env
 | `GOOGLE_MAPS_API_KEY` | Journey planning (Distance Matrix + Geocoding) |
 | `CHAT_SERVICE_BASE_URL` | Defaults to `http://localhost:8002` |
 | `PREDICTION_SERVICE_BASE_URL` | Defaults to `http://localhost:8001` |
+| `AI_SERVICE_TOKEN` | Shared secret accepted by Spring internal AI tool endpoints |
 
-**chat-service** (`.env`): `CHAT_DB_URL`, `DEEPSEEK_API_KEY` (optional: `DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`).
+**chat-service** (`.env`): `CHAT_DB_URL`, `DEEPSEEK_API_KEY`, `AI_SERVICE_TOKEN` (optional: `DEEPSEEK_BASE_URL`, `DEEPSEEK_MODEL`, `INTERNAL_TOOLS_BASE_URL`).
 
 **prediction-service** (`.env`): `HF_TOKEN` — downloads `bike_availability_model.pkl` + `model_features.pkl` from Hugging Face Hub at startup. Or drop the `.pkl` files into `prediction-service/machine_learning/` yourself.
 

@@ -8,10 +8,11 @@ from functools import lru_cache
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
+import httpx
 import psycopg
 from fastapi import FastAPI, HTTPException
 from langchain_community.chat_message_histories import SQLChatMessageHistory
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -20,6 +21,37 @@ from sse_starlette.sse import EventSourceResponse
 logger = logging.getLogger(__name__)
 
 ROLE_MAP = {"human": "user", "ai": "assistant"}
+MAX_TOOL_STEPS = 4
+ASSISTANT_GREETING = (
+    "Hi! I'm your UCDSE assistant. Ask me about bike sharing, stations, "
+    "or sustainable mobility—or just say hello."
+)
+
+# --- 工具描述 ---
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_current_user",
+            "description": (
+                "Get the current authenticated user's account id and email. "
+                "Only call this tool when the user's latest message explicitly asks "
+                "for their own id, user id, email, account information, or identity. "
+                "Do not call this tool for greetings, capability descriptions, bike "
+                "sharing questions, station questions, mobility advice, or general help. "
+                "Do not proactively look up or reveal user identity. Do not mention "
+                "this tool or any account, email, user id, or identity lookup capability "
+                "when the user asks what you can do."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": False,
+            },
+        },
+    }
+]
 
 
 class Settings(BaseSettings):
@@ -32,6 +64,11 @@ class Settings(BaseSettings):
         validation_alias="DEEPSEEK_BASE_URL",
     )
     deepseek_model: str = Field(default="deepseek-chat", validation_alias="DEEPSEEK_MODEL")
+    internal_tools_base_url: str = Field(
+        default="http://localhost:8080/internal/ai/tools",
+        validation_alias="INTERNAL_TOOLS_BASE_URL",
+    )
+    ai_service_token: str | None = Field(default=None, validation_alias="AI_SERVICE_TOKEN")
 
     @property
     def is_configured(self) -> bool:
@@ -154,6 +191,66 @@ def _map_messages(messages: list[Any]) -> list[MessageItem]:
     return items
 
 
+# --- 工具实现 ---
+def get_current_user(session_id: str, settings: Settings) -> dict[str, Any]:
+    if not settings.ai_service_token:
+        raise RuntimeError("AI_SERVICE_TOKEN is not configured")
+    url = settings.internal_tools_base_url.rstrip("/") + "/current-user"
+    headers = {"Authorization": f"Bearer {settings.ai_service_token}"}
+    with httpx.Client(timeout=5.0) as client:
+        response = client.get(url, params={"session_id": session_id}, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+    return {"id": data.get("id"), "email": data.get("email")}
+
+
+tool_functions = {
+    "get_current_user": get_current_user,
+}
+
+
+def _log_tool_call(session_id: str, name: str | None, args: dict[str, Any]) -> None:
+    print(f"[tool] start session_id={session_id} name={name} args={args}", flush=True)
+
+
+# --- Agent 主循环 ---
+def _agent_reply(req: ChatRequest, settings: Settings, mem: SQLChatMessageHistory) -> tuple[HumanMessage, str]:
+    pending = HumanMessage(content=req.message)
+    messages = [AIMessage(content=ASSISTANT_GREETING), *list(mem.messages), pending]
+    llm_with_tools = _llm(sync=True).bind(tools=tools)
+
+    for _ in range(MAX_TOOL_STEPS):
+        ai = llm_with_tools.invoke(messages)
+        messages.append(ai)
+
+        tool_calls = getattr(ai, "tool_calls", None) or []
+        if not tool_calls:
+            reply = ai.content if isinstance(ai.content, str) else json.dumps(ai.content)
+            return pending, reply
+
+        for tool_call in tool_calls:
+            name = tool_call.get("name")
+            args = tool_call.get("args") or {}
+            tool_call_id = tool_call.get("id") or name or "tool_call"
+            _log_tool_call(req.session_id, name, args)
+            try:
+                result = tool_functions[name](req.session_id, settings, **args)
+                print(f"[tool] done session_id={req.session_id} name={name}", flush=True)
+            except Exception as exc:
+                print(f"[tool] failed session_id={req.session_id} name={name}: {exc}", flush=True)
+                logger.warning("tool %s failed: %s", name, exc)
+                result = {"error": str(exc)}
+            messages.append(
+                ToolMessage(
+                    content=json.dumps(result),
+                    tool_call_id=tool_call_id,
+                    name=name or "unknown",
+                )
+            )
+
+    return pending, "I could not complete the tool workflow within the allowed number of steps."
+
+
 @app.get("/health", response_model=HealthReply)
 def health() -> HealthReply:
     settings = get_settings()
@@ -165,15 +262,14 @@ def chat(req: ChatRequest) -> ChatReply:
     settings = _require_runtime()
     _ensure_session_row(req.session_id, req.user_id, settings)
     mem = _memory(req.session_id, settings)
-    pending = HumanMessage(content=req.message)
     try:
-        ai = _llm(sync=True).invoke(list(mem.messages) + [pending])
+        pending, reply = _agent_reply(req, settings, mem)
     except Exception:
         logger.exception("chat failed for session_id=%s", req.session_id)
         raise
     mem.add_message(pending)
-    mem.add_message(AIMessage(content=ai.content))
-    return ChatReply(chat_id=req.session_id, reply=ai.content)
+    mem.add_message(AIMessage(content=reply))
+    return ChatReply(chat_id=req.session_id, reply=reply)
 
 
 @app.post("/chat/stream")
@@ -182,19 +278,57 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
     _ensure_session_row(req.session_id, req.user_id, settings)
     mem = _memory(req.session_id, settings)
     pending = HumanMessage(content=req.message)
-    history = list(mem.messages) + [pending]
-    llm_stream = _llm(sync=False)
 
     async def event_generator():
         chunks: list[str] = []
         persisted = False
         try:
-            async for event in llm_stream.astream(history):
-                piece = event.content if isinstance(event.content, str) else str(event.content)
-                if not piece:
-                    continue
-                chunks.append(piece)
-                yield {"data": json.dumps({"content": piece})}
+            messages = [AIMessage(content=ASSISTANT_GREETING), *list(mem.messages), pending]
+            llm_with_tools = _llm(sync=False).bind(tools=tools)
+
+            for _ in range(MAX_TOOL_STEPS):
+                assistant_message = None
+
+                async for chunk in llm_with_tools.astream(messages):
+                    assistant_message = chunk if assistant_message is None else assistant_message + chunk
+                    piece = chunk.content if isinstance(chunk.content, str) else json.dumps(chunk.content)
+                    if piece:
+                        chunks.append(piece)
+                        yield {"data": json.dumps({"content": piece})}
+
+                if assistant_message is None:
+                    break
+
+                messages.append(
+                    AIMessage(
+                        content=assistant_message.content,
+                        tool_calls=assistant_message.tool_calls,
+                    )
+                )
+                tool_calls = getattr(assistant_message, "tool_calls", None) or []
+                if not tool_calls:
+                    break
+
+                for tool_call in tool_calls:
+                    name = tool_call.get("name")
+                    args = tool_call.get("args") or {}
+                    tool_call_id = tool_call.get("id") or name or "tool_call"
+                    _log_tool_call(req.session_id, name, args)
+                    try:
+                        result = tool_functions[name](req.session_id, settings, **args)
+                        print(f"[tool] done session_id={req.session_id} name={name}", flush=True)
+                    except Exception as exc:
+                        print(f"[tool] failed session_id={req.session_id} name={name}: {exc}", flush=True)
+                        logger.warning("tool %s failed: %s", name, exc)
+                        result = {"error": str(exc)}
+                    messages.append(
+                        ToolMessage(
+                            content=json.dumps(result),
+                            tool_call_id=tool_call_id,
+                            name=name or "unknown",
+                        )
+                    )
+
             mem.add_message(pending)
             mem.add_message(AIMessage(content="".join(chunks)))
             persisted = True

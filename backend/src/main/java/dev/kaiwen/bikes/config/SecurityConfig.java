@@ -74,6 +74,8 @@ public class SecurityConfig {
                                         .authenticated()
                                         .requestMatchers(antMatcher("/api/chat/**"))
                                         .authenticated()
+                                        .requestMatchers(antMatcher("/internal/ai/tools/**"))
+                                        .permitAll()
                                         .anyRequest()
                                         .denyAll())
                 .addFilterBefore(
