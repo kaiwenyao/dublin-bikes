@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.kaiwen.bikes.client.ChatServiceClient;
 import dev.kaiwen.bikes.config.ChatServiceProperties;
 import dev.kaiwen.bikes.dto.ApiCodes;
+import dev.kaiwen.bikes.dto.request.ChatRequestDTO;
 import dev.kaiwen.bikes.dto.response.ChatMessageVO;
 import dev.kaiwen.bikes.dto.response.ChatReplyVO;
 import dev.kaiwen.bikes.dto.response.ChatSessionVO;
@@ -24,6 +25,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -51,18 +53,19 @@ public class ChatService {
     private final ChatServiceProperties properties;
     private final ObjectMapper objectMapper;
 
-    public ChatReplyVO chat(String message, String chatId) {
+    public ChatReplyVO chat(String message, String chatId, ChatRequestDTO.LocationDTO location) {
         int userId = currentUserId();
         String sessionId = generateSessionId(userId, chatId);
         ChatSession session = ensureSession(sessionId, userId);
-        ChatReplyVO reply = chatServiceClient.chat(sessionId, userId, message);
+        ChatReplyVO reply = chatServiceClient.chat(sessionId, userId, message, location);
         if (session.getTitle() == null) {
             chatTitleGenerator.generate(sessionId, message);
         }
         return reply;
     }
 
-    public void chatStream(String message, String chatId, SseEmitter emitter) {
+    public void chatStream(
+            String message, String chatId, ChatRequestDTO.LocationDTO location, SseEmitter emitter) {
         int userId = currentUserId();
         String sessionId = generateSessionId(userId, chatId);
         ensureSession(sessionId, userId);
@@ -73,8 +76,14 @@ public class ChatService {
 
         String jsonBody;
         try {
-            jsonBody = objectMapper.writeValueAsString(
-                    Map.of("session_id", sessionId, "user_id", userId, "message", message));
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("session_id", sessionId);
+            body.put("user_id", userId);
+            body.put("message", message);
+            if (location != null) {
+                body.put("location", location);
+            }
+            jsonBody = objectMapper.writeValueAsString(body);
         } catch (Exception e) {
             log.error("failed to serialize chat stream request", e);
             emitter.completeWithError(new BusinessException(

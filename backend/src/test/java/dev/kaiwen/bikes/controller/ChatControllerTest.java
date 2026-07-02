@@ -2,7 +2,9 @@ package dev.kaiwen.bikes.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
@@ -59,12 +61,20 @@ class ChatControllerTest {
 
     @Test
     void chat_returnsOkEnvelope() throws Exception {
-        when(chatService.chat("hello", "default"))
+        when(chatService.chat(
+                        eq("hello"),
+                        eq("default"),
+                        argThat(location -> location != null
+                                && location.lat().equals(53.3498)
+                                && location.lng().equals(-6.2603)
+                                && location.accuracyM().equals(35.0))))
                 .thenReturn(new ChatReplyVO("user_1_chat_default", "hi there"));
 
         mockMvc.perform(post("/api/chat")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"message\":\"hello\",\"chat_id\":\"default\"}"))
+                        .content(
+                                "{\"message\":\"hello\",\"chat_id\":\"default\","
+                                        + "\"location\":{\"lat\":53.3498,\"lng\":-6.2603,\"accuracy_m\":35}}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(ApiCodes.SUCCESS))
                 .andExpect(jsonPath("$.data.chat_id").value("user_1_chat_default"))
@@ -74,12 +84,12 @@ class ChatControllerTest {
     @Test
     void chatStream_returnsSseStream() throws Exception {
         doAnswer(invocation -> {
-            SseEmitter emitter = invocation.getArgument(2);
+            SseEmitter emitter = invocation.getArgument(3);
             emitter.send(SseEmitter.event().data("{\"content\":\"hello\"}"));
             emitter.send(SseEmitter.event().data("[DONE]"));
             emitter.complete();
             return null;
-        }).when(chatService).chatStream(eq("hello"), eq("default"), any(SseEmitter.class));
+        }).when(chatService).chatStream(eq("hello"), eq("default"), isNull(), any(SseEmitter.class));
 
         MvcResult mvcResult = mockMvc.perform(post("/api/chat/stream")
                         .contentType(MediaType.APPLICATION_JSON)

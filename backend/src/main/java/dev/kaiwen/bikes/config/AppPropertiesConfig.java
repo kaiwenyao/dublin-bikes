@@ -7,7 +7,6 @@ import org.springframework.context.annotation.Configuration;
 @EnableConfigurationProperties({
     JwtProperties.class,
     VerificationProperties.class,
-    MailProperties.class,
-    InternalAiToolProperties.class
+    MailProperties.class
 })
 public class AppPropertiesConfig {}

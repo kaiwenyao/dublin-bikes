@@ -29,13 +29,13 @@ public class ChatController {
 
     @PostMapping
     public ApiResponse<ChatReplyVO> chat(@Valid @RequestBody ChatRequestDTO request) {
-        return ApiResponse.ok(chatService.chat(request.message(), request.chatId()));
+        return ApiResponse.ok(chatService.chat(request.message(), request.chatId(), request.location()));
     }
 
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public ResponseEntity<SseEmitter> chatStream(@Valid @RequestBody ChatRequestDTO request) {
         SseEmitter emitter = new SseEmitter(0L);
-        chatService.chatStream(request.message(), request.chatId(), emitter);
+        chatService.chatStream(request.message(), request.chatId(), request.location(), emitter);
         return ResponseEntity.ok()
                 .header("X-Accel-Buffering", "no")
                 .header("Cache-Control", "no-cache, no-transform")

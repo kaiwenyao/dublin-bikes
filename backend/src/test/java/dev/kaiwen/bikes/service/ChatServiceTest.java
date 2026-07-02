@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.kaiwen.bikes.client.ChatServiceClient;
 import dev.kaiwen.bikes.config.ChatServiceProperties;
 import dev.kaiwen.bikes.dto.ApiCodes;
+import dev.kaiwen.bikes.dto.request.ChatRequestDTO;
 import dev.kaiwen.bikes.dto.response.ChatMessageVO;
 import dev.kaiwen.bikes.dto.response.ChatReplyVO;
 import dev.kaiwen.bikes.dto.response.ChatSessionVO;
@@ -128,12 +129,13 @@ class ChatServiceTest {
     @Test
     void chat_ensuresSessionAndCallsClient() {
         ChatSession session = session("user_1_chat_default", 1);
+        ChatRequestDTO.LocationDTO location = new ChatRequestDTO.LocationDTO(53.3498, -6.2603, 35.0);
         when(chatSessionRepository.findById("user_1_chat_default"))
                 .thenReturn(Optional.of(session));
-        when(chatServiceClient.chat("user_1_chat_default", 1, "hello"))
+        when(chatServiceClient.chat("user_1_chat_default", 1, "hello", location))
                 .thenReturn(new ChatReplyVO("user_1_chat_default", "hi there"));
 
-        ChatReplyVO result = chatService.chat("hello", "default");
+        ChatReplyVO result = chatService.chat("hello", "default", location);
 
         assertThat(result.reply()).isEqualTo("hi there");
     }
@@ -144,10 +146,10 @@ class ChatServiceTest {
         session.setTitle(null);
         when(chatSessionRepository.findById("user_1_chat_default"))
                 .thenReturn(Optional.of(session));
-        when(chatServiceClient.chat(any(), any(int.class), any()))
+        when(chatServiceClient.chat(any(), any(int.class), any(), any()))
                 .thenReturn(new ChatReplyVO("user_1_chat_default", "reply"));
 
-        chatService.chat("hello", "default");
+        chatService.chat("hello", "default", null);
 
         verify(chatTitleGenerator).generate("user_1_chat_default", "hello");
     }
@@ -158,10 +160,10 @@ class ChatServiceTest {
         session.setTitle("existing title");
         when(chatSessionRepository.findById("user_1_chat_default"))
                 .thenReturn(Optional.of(session));
-        when(chatServiceClient.chat(any(), any(int.class), any()))
+        when(chatServiceClient.chat(any(), any(int.class), any(), any()))
                 .thenReturn(new ChatReplyVO("user_1_chat_default", "reply"));
 
-        chatService.chat("hello", "default");
+        chatService.chat("hello", "default", null);
 
         verify(chatTitleGenerator, never()).generate(any(), any());
     }
@@ -276,7 +278,7 @@ class ChatServiceTest {
     void currentUserId_noAuthentication_throwsAuthException() {
         SecurityContextHolder.clearContext();
 
-        assertThatThrownBy(() -> chatService.chat("hello", "default"))
+        assertThatThrownBy(() -> chatService.chat("hello", "default", null))
                 .isInstanceOf(AuthException.class);
     }
 
@@ -306,7 +308,7 @@ class ChatServiceTest {
 
             TrackingSseEmitter emitter = new TrackingSseEmitter(5000L);
 
-            chatService.chatStream("hello", "default", emitter);
+            chatService.chatStream("hello", "default", null, emitter);
 
             assertThat(emitter.awaitDone(5, TimeUnit.SECONDS)).isTrue();
             assertThat(emitter.error.get()).isInstanceOf(BusinessException.class);
@@ -348,7 +350,7 @@ class ChatServiceTest {
 
             TrackingSseEmitter emitter = new TrackingSseEmitter(5000L);
 
-            chatService.chatStream("hello", "default", emitter);
+            chatService.chatStream("hello", "default", null, emitter);
 
             assertThat(emitter.awaitDone(5, TimeUnit.SECONDS)).isTrue();
             assertThat(emitter.error.get()).isNull();

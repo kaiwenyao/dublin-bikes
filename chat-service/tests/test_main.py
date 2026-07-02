@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,6 +18,7 @@ from main import (
     MessageItem,
     Settings,
     TitleReply,
+    get_nearest_station_availability,
     _map_messages,
     _psycopg_conninfo,
     app,
@@ -31,7 +33,6 @@ def _configured_settings() -> Settings:
     return Settings(
         chat_db_url="postgresql://user:pass@localhost:5432/chat",
         deepseek_api_key="test-key",
-        ai_service_token="test-token",
     )
 
 
@@ -72,6 +73,17 @@ def test_chat_request_accepts_valid_message():
     assert req.message == "Hello"
 
 
+def test_chat_request_accepts_location_context():
+    req = ChatRequest(
+        session_id="sess-1",
+        user_id=42,
+        message="nearest station",
+        location={"lat": 53.3498, "lng": -6.2603, "accuracy_m": 25},
+    )
+    assert req.location is not None
+    assert req.location.lat == 53.3498
+
+
 def test_psycopg_conninfo_strips_sqlalchemy_driver_and_fixes_sslmode():
     url = "postgresql+psycopg://user:pass@host:5432/db?sslmode"
     assert _psycopg_conninfo(url) == "postgresql://user:pass@host:5432/db?sslmode=require"
@@ -94,6 +106,62 @@ def test_map_messages_maps_roles_and_serializes_list_content():
         MessageItem(role="user", content="hi"),
         MessageItem(role="assistant", content='[{"type": "text", "text": "yo"}]'),
     ]
+
+
+@patch("main.psycopg.connect")
+def test_get_nearest_station_availability_ranks_by_distance(mock_connect):
+    conn = MagicMock()
+    cursor = MagicMock()
+    mock_connect.return_value.__enter__.return_value = conn
+    conn.cursor.return_value.__enter__.return_value = cursor
+    cursor.fetchall.return_value = [
+        (
+            1,
+            "Far Station",
+            "Far Address",
+            53.3600,
+            -6.2800,
+            20,
+            3,
+            17,
+            "OPEN",
+            datetime(2026, 1, 1, 10, 0),
+            datetime(2026, 1, 1, 10, 1),
+        ),
+        (
+            2,
+            "Near Station",
+            "Near Address",
+            53.3499,
+            -6.2604,
+            30,
+            8,
+            22,
+            "OPEN",
+            datetime(2026, 1, 1, 10, 2),
+            datetime(2026, 1, 1, 10, 3),
+        ),
+    ]
+    req = ChatRequest(
+        session_id="sess-1",
+        user_id=42,
+        message="nearest station",
+        location={"lat": 53.3498, "lng": -6.2603},
+    )
+
+    result = get_nearest_station_availability(req, _configured_settings(), limit=1)
+
+    assert result["stations"][0]["number"] == 2
+    assert result["stations"][0]["available_bikes"] == 8
+    assert result["stations"][0]["distance_m"] < 50
+
+
+def test_get_nearest_station_availability_requires_location():
+    req = ChatRequest(session_id="sess-1", user_id=42, message="nearest station")
+
+    result = get_nearest_station_availability(req, _configured_settings())
+
+    assert result["error"] == "location_required"
 
 
 @patch(
@@ -142,13 +210,13 @@ def test_chat_persists_human_and_ai_on_success(
 
 @patch.dict(
     "main.tool_functions",
-    {"get_current_user": MagicMock(return_value={"id": 42, "email": "kai@example.com"})},
+    {"get_nearest_station_availability": MagicMock(return_value={"stations": [{"number": 2}]})},
 )
 @patch("main._ensure_session_row")
 @patch("main._memory")
 @patch("main._llm")
 @patch("main._require_runtime", return_value=_configured_settings())
-def test_chat_executes_current_user_tool_and_sends_observation_to_llm(
+def test_chat_executes_nearest_station_tool_and_sends_observation_to_llm(
     _mock_runtime,
     mock_llm,
     mock_memory,
@@ -161,25 +229,34 @@ def test_chat_executes_current_user_tool_and_sends_observation_to_llm(
         mock_llm,
         AIMessage(
             content="",
-            tool_calls=[{"name": "get_current_user", "args": {}, "id": "call_1"}],
+            tool_calls=[
+                {
+                    "name": "get_nearest_station_availability",
+                    "args": {"limit": 1},
+                    "id": "call_1",
+                }
+            ],
         ),
-        AIMessage(content="Your email is kai@example.com and your id is 42."),
+        AIMessage(content="The nearest station has 8 bikes."),
     )
 
     response = client.post(
         "/chat",
-        json={"session_id": "sess-1", "user_id": 42, "message": "what is my email?"},
+        json={
+            "session_id": "sess-1",
+            "user_id": 42,
+            "message": "nearest station?",
+            "location": {"lat": 53.3498, "lng": -6.2603},
+        },
     )
 
     assert response.status_code == 200
-    assert response.json()["reply"] == "Your email is kai@example.com and your id is 42."
-    mock_llm.return_value.bind.assert_called_once_with(tools=tools)
+    assert response.json()["reply"] == "The nearest station has 8 bikes."
     assert bound.invoke.call_count == 2
     second_messages = bound.invoke.call_args_list[1][0][0]
     tool_observations = [m for m in second_messages if isinstance(m, ToolMessage)]
     assert len(tool_observations) == 1
     assert tool_observations[0].tool_call_id == "call_1"
-    assert '"email": "kai@example.com"' in tool_observations[0].content
 
 
 @patch("main._ensure_session_row")
@@ -262,6 +339,7 @@ def test_chat_stream_emits_chunks_and_done(
     assert any('{"content": "Hel"}' in c for c in chunks)
     assert any('{"content": "lo"}' in c for c in chunks)
     assert any(c.endswith("[DONE]") for c in chunks)
+    mock_llm.return_value.bind.assert_called_once_with(tools=tools)
     assert isinstance(bound.stream_messages[0][0], AIMessage)
     assert bound.stream_messages[0][0].content == ASSISTANT_GREETING
     assert mem.add_message.call_count == 2
@@ -300,13 +378,13 @@ def test_chat_stream_does_not_persist_when_llm_fails_before_chunks(
 
 @patch.dict(
     "main.tool_functions",
-    {"get_current_user": MagicMock(return_value={"id": 42, "email": "kai@example.com"})},
+    {"get_nearest_station_availability": MagicMock(return_value={"stations": [{"number": 2}]})},
 )
 @patch("main._ensure_session_row")
 @patch("main._memory")
 @patch("main._llm")
 @patch("main._require_runtime", return_value=_configured_settings())
-def test_chat_stream_persists_tool_agent_reply(
+def test_chat_stream_persists_nearest_station_tool_reply(
     _mock_runtime,
     mock_llm,
     mock_memory,
@@ -320,20 +398,32 @@ def test_chat_stream_persists_tool_agent_reply(
         [
             AIMessageChunk(
                 content="",
-                tool_call_chunks=[{"name": "get_current_user", "args": "", "id": "call_1", "index": 0}],
+                tool_call_chunks=[
+                    {
+                        "name": "get_nearest_station_availability",
+                        "args": "",
+                        "id": "call_1",
+                        "index": 0,
+                    }
+                ],
             ),
             AIMessageChunk(
                 content="",
-                tool_call_chunks=[{"name": None, "args": "{}", "id": None, "index": 0}],
+                tool_call_chunks=[{"name": None, "args": '{"limit":1}', "id": None, "index": 0}],
             ),
         ],
-        [AIMessageChunk(content="Your "), AIMessageChunk(content="id is 42.")],
+        [AIMessageChunk(content="Nearest "), AIMessageChunk(content="station has bikes.")],
     )
 
     with client_no_raise.stream(
         "POST",
         "/chat/stream",
-        json={"session_id": "sess-1", "user_id": 42, "message": "what is my id?"},
+        json={
+            "session_id": "sess-1",
+            "user_id": 42,
+            "message": "nearest station?",
+            "location": {"lat": 53.3498, "lng": -6.2603},
+        },
     ) as response:
         assert response.status_code == 200
         chunks = [line for line in response.iter_lines() if line.startswith("data: ")]
@@ -341,6 +431,5 @@ def test_chat_stream_persists_tool_agent_reply(
     assert mem.add_message.call_count == 2
     ai = mem.add_message.call_args_list[1][0][0]
     assert isinstance(ai, AIMessage)
-    assert ai.content == "Your id is 42."
-    assert any('{"content": "Your "}' in c for c in chunks)
-    assert any('{"content": "id is 42."}' in c for c in chunks)
+    assert ai.content == "Nearest station has bikes."
+    assert any('{"content": "Nearest "}' in c for c in chunks)

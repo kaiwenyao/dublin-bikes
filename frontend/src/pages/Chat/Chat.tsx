@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import {
   chatStreamAPI,
+  type ChatLocation,
   type ChatSession,
   type ChatMessageDTO,
   getChatSessionsAPI,
@@ -10,6 +11,7 @@ import {
 import { getAccessToken } from '@/api/token'
 import { getMeAPI } from '@/api/user'
 import { Button } from '@/components/ui/button'
+import { needsCurrentLocation } from '@/lib/chat-location-intent'
 import { toast } from 'sonner'
 
 type Role = 'user' | 'assistant'
@@ -74,6 +76,28 @@ function isAbortLikeError(error: unknown): boolean {
     return error.name === 'AbortError' || error.message.toLowerCase().includes('aborted')
   }
   return false
+}
+
+function getCurrentChatLocation(signal: AbortSignal): Promise<ChatLocation | undefined> {
+  if (!navigator.geolocation) return Promise.resolve(undefined)
+
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        if (signal.aborted) {
+          resolve(undefined)
+          return
+        }
+        resolve({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          accuracy_m: position.coords.accuracy,
+        })
+      },
+      () => resolve(undefined),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    )
+  })
 }
 
 function formatSessionTimestamp(createdAt: string): string {
@@ -412,9 +436,18 @@ export default function Chat() {
     setInput('')
 
     try {
+      const location = needsCurrentLocation(text)
+        ? await getCurrentChatLocation(controller.signal)
+        : undefined
+      if (controller.signal.aborted || !isMountedRef.current) {
+        finishSending()
+        return
+      }
+
       await chatStreamAPI({
         chat_id: resolvedChatId,
         message: text,
+        location,
         signal: controller.signal,
         onMessage(chunk) {
           if (controller.signal.aborted) return
