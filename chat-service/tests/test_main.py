@@ -166,6 +166,7 @@ def test_get_nearest_station_availability_pushes_ranking_to_sql(mock_db):
 
     sql, params = cursor.execute.call_args[0]
     assert params == {"lat": 53.3498, "lng": -6.2603, "limit": 1}
+    assert "CROSS JOIN LATERAL" in sql
     assert "ORDER BY distance_m" in sql
     assert "LIMIT %(limit)s" in sql
     assert result["stations"][0]["distance_m"] == 14

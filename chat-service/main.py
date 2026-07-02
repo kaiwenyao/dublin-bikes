@@ -244,25 +244,13 @@ def get_nearest_station_availability(
         normalized_limit = 3
 
     query = """
-        WITH latest AS (
-            SELECT ranked.*
-            FROM (
-                SELECT
-                    a.*,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY a.number
-                        ORDER BY a."timestamp" DESC, a.id DESC
-                    ) AS rn
-                FROM availability a
-            ) ranked
-            WHERE ranked.rn = 1
-        )
         SELECT
             s.number,
             s.name,
             s.address,
             s.latitude,
             s.longitude,
+            -- Haversine formula; 6371000 = Earth mean radius in metres.
             ROUND(
                 2 * 6371000 * ASIN(
                     SQRT(
@@ -282,7 +270,18 @@ def get_nearest_station_availability(
             latest."timestamp",
             latest.requested_at
         FROM station s
-        JOIN latest ON latest.number = s.number
+        CROSS JOIN LATERAL (
+            SELECT
+                a.available_bikes,
+                a.available_bike_stands,
+                a.status,
+                a."timestamp",
+                a.requested_at
+            FROM availability a
+            WHERE a.number = s.number
+            ORDER BY a."timestamp" DESC, a.id DESC
+            LIMIT 1
+        ) latest
         ORDER BY distance_m, s.number
         LIMIT %(limit)s
     """
