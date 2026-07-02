@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 from functools import lru_cache
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -28,7 +27,6 @@ logger = logging.getLogger(__name__)
 
 ROLE_MAP = {"human": "user", "ai": "assistant"}
 MAX_TOOL_STEPS = 4
-EARTH_RADIUS_M = 6_371_000
 ASSISTANT_GREETING = (
     "Hi! I'm your UCDSE assistant. Ask me about bike sharing, stations, "
     "or sustainable mobility—or just say hello."
@@ -146,7 +144,7 @@ def _require_runtime() -> Settings:
 
 
 def _psycopg_conninfo(db_url: str) -> str:
-    """Normalize CHAT_DB_URL for psycopg.connect (libpq), not SQLAlchemy.
+    """Normalize CHAT_DB_URL for the libpq connection pool, not SQLAlchemy.
 
     LangChain accepts postgresql+psycopg://…; psycopg rejects the +driver suffix.
     Also repairs a bare ?sslmode query flag (no value), which Supabase URLs sometimes have.
@@ -229,18 +227,6 @@ def _map_messages(messages: list[Any]) -> list[MessageItem]:
     return items
 
 
-def _distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> int:
-    lat1_rad = math.radians(lat1)
-    lat2_rad = math.radians(lat2)
-    delta_lat = math.radians(lat2 - lat1)
-    delta_lng = math.radians(lng2 - lng1)
-    a = (
-        math.sin(delta_lat / 2) ** 2
-        + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lng / 2) ** 2
-    )
-    return round(EARTH_RADIUS_M * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
-
-
 def get_nearest_station_availability(
     req: ChatRequest,
     settings: Settings,
@@ -277,6 +263,18 @@ def get_nearest_station_availability(
             s.address,
             s.latitude,
             s.longitude,
+            ROUND(
+                2 * 6371000 * ASIN(
+                    SQRT(
+                        LEAST(
+                            1.0,
+                            POWER(SIN(RADIANS(s.latitude - %(lat)s) / 2), 2)
+                            + COS(RADIANS(%(lat)s)) * COS(RADIANS(s.latitude))
+                              * POWER(SIN(RADIANS(s.longitude - %(lng)s) / 2), 2)
+                        )
+                    )
+                )
+            )::int AS distance_m,
             s.bike_stands,
             latest.available_bikes,
             latest.available_bike_stands,
@@ -285,12 +283,17 @@ def get_nearest_station_availability(
             latest.requested_at
         FROM station s
         JOIN latest ON latest.number = s.number
+        ORDER BY distance_m, s.number
+        LIMIT %(limit)s
     """
 
     stations: list[dict[str, Any]] = []
     with _db_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(query)
+            cur.execute(
+                query,
+                {"lat": req.location.lat, "lng": req.location.lng, "limit": normalized_limit},
+            )
             rows = cur.fetchall()
 
     for row in rows:
@@ -300,6 +303,7 @@ def get_nearest_station_availability(
             address,
             latitude,
             longitude,
+            distance_m,
             bike_stands,
             available_bikes,
             available_bike_stands,
@@ -314,7 +318,7 @@ def get_nearest_station_availability(
                 "address": address,
                 "latitude": float(latitude),
                 "longitude": float(longitude),
-                "distance_m": _distance_m(req.location.lat, req.location.lng, float(latitude), float(longitude)),
+                "distance_m": distance_m,
                 "bike_stands": bike_stands,
                 "available_bikes": available_bikes,
                 "available_bike_stands": available_bike_stands,
@@ -324,9 +328,7 @@ def get_nearest_station_availability(
             }
         )
 
-    stations.sort(key=lambda station: station["distance_m"])
-    nearest = stations[:normalized_limit]
-    if not nearest:
+    if not stations:
         return {"error": "station_availability_unavailable", "stations": []}
 
     return {
@@ -335,7 +337,7 @@ def get_nearest_station_availability(
             "lng": req.location.lng,
             "accuracy_m": req.location.accuracy_m,
         },
-        "stations": nearest,
+        "stations": stations,
     }
 
 
