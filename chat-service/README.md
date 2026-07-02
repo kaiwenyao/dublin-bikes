@@ -7,6 +7,7 @@ Independent Python microservice for LLM chat (FastAPI + LangChain + DeepSeek). S
 - Python 3.12+ (matches Dockerfile and Jenkins agent)
 - PostgreSQL with `message_store` table (created by backend Flyway `V1__baseline.sql`)
 - DeepSeek API key (`DEEPSEEK_API_KEY`)
+- Spring internal AI tool service token (`AI_SERVICE_TOKEN`) if function-calling tools are used
 
 ## Local setup
 
@@ -15,7 +16,7 @@ cd chat-service
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env        # set CHAT_DB_URL and DEEPSEEK_API_KEY
+cp .env.example .env        # set CHAT_DB_URL, DEEPSEEK_API_KEY, and AI_SERVICE_TOKEN
 uvicorn main:app --host 0.0.0.0 --port 8002
 ```
 
@@ -36,6 +37,10 @@ curl http://localhost:8002/health
 | GET | `/sessions/{session_id}/messages` | Message history |
 
 Spring default upstream: `http://localhost:8002` (`app.chat-service.base-url` in backend config).
+
+Function-calling tools call Spring's internal tool gateway at `INTERNAL_TOOLS_BASE_URL`
+(default `http://localhost:8080/internal/ai/tools`) with
+`Authorization: Bearer $AI_SERVICE_TOKEN`.
 
 ## Trust boundaries
 

@@ -96,8 +96,9 @@ cp frontend/.env.example           frontend/.env
 | `GOOGLE_MAPS_API_KEY` | 行程规划（Distance Matrix + Geocoding） |
 | `CHAT_SERVICE_BASE_URL` | 默认 `http://localhost:8002` |
 | `PREDICTION_SERVICE_BASE_URL` | 默认 `http://localhost:8001` |
+| `AI_SERVICE_TOKEN` | Spring 内部 AI 工具接口接受的服务间共享密钥 |
 
-**chat-service**（`.env`）：`CHAT_DB_URL`、`DEEPSEEK_API_KEY`（可选：`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`）。
+**chat-service**（`.env`）：`CHAT_DB_URL`、`DEEPSEEK_API_KEY`、`AI_SERVICE_TOKEN`（可选：`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL`、`INTERNAL_TOOLS_BASE_URL`）。
 
 **prediction-service**（`.env`）：`HF_TOKEN` —— 容器启动时从 Hugging Face Hub 下载 `bike_availability_model.pkl` + `model_features.pkl`。也可自行将 `.pkl` 文件放入 `prediction-service/machine_learning/`。
 

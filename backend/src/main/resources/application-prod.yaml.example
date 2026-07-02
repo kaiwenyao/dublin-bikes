@@ -40,6 +40,9 @@ app:
     connect-timeout-ms: 3000
     read-timeout-ms: 15000
 
+  internal-ai-tools:
+    service-token: ${AI_SERVICE_TOKEN}
+
   jwt:
     access-secret: ${JWT_SECRET_KEY}
     refresh-secret: ${JWT_REFRESH_SECRET_KEY}

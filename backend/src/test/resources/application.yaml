@@ -42,6 +42,9 @@ app:
     connect-timeout-ms: 1000
     read-timeout-ms: 5000
 
+  internal-ai-tools:
+    service-token: test-service-token
+
   jwt:
     access-secret: test-access-secret-key-at-least-32-bytes!!
     refresh-secret: test-refresh-secret-key-at-least-32-bytes!!
