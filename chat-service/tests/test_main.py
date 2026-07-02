@@ -133,11 +133,11 @@ def test_map_messages_maps_roles_and_serializes_list_content():
     ]
 
 
-@patch("main.psycopg.connect")
-def test_get_nearest_station_availability_ranks_by_distance(mock_connect):
+@patch("main._db_connection")
+def test_get_nearest_station_availability_ranks_by_distance(mock_db):
     conn = MagicMock()
     cursor = MagicMock()
-    mock_connect.return_value.__enter__.return_value = conn
+    mock_db.return_value.__enter__.return_value = conn
     conn.cursor.return_value.__enter__.return_value = cursor
     cursor.fetchall.return_value = [
         (
@@ -179,6 +179,25 @@ def test_get_nearest_station_availability_ranks_by_distance(mock_connect):
     assert result["stations"][0]["number"] == 2
     assert result["stations"][0]["available_bikes"] == 8
     assert result["stations"][0]["distance_m"] < 50
+
+
+@patch("main.ConnectionPool")
+@patch("main._require_runtime", return_value=_configured_settings())
+def test_db_pool_is_lazy_and_cached(_mock_runtime, mock_pool_cls):
+    import main
+
+    main._db_pool.cache_clear()
+    try:
+        main._db_pool()
+        main._db_pool()
+
+        assert mock_pool_cls.call_count == 1
+        kwargs = mock_pool_cls.call_args.kwargs
+        assert kwargs["conninfo"] == "postgresql://user:pass@localhost:5432/chat"
+        assert kwargs["min_size"] == 1
+        assert kwargs["max_size"] == 4
+    finally:
+        main._db_pool.cache_clear()
 
 
 def test_build_messages_includes_location_system_message_when_present():

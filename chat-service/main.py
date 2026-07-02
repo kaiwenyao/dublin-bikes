@@ -9,7 +9,6 @@ from functools import lru_cache
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-import psycopg
 from fastapi import FastAPI, HTTPException
 from langchain_community.chat_message_histories import SQLChatMessageHistory
 from langchain_core.messages import (
@@ -20,6 +19,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_openai import ChatOpenAI
+from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sse_starlette.sse import EventSourceResponse
@@ -163,13 +163,30 @@ def _psycopg_conninfo(db_url: str) -> str:
     return urlunparse(parsed._replace(scheme=scheme, query=urlencode(fixed_query)))
 
 
+@lru_cache  # DB URL rotation requires container restart (cached pool holds old conninfo).
+def _db_pool() -> ConnectionPool:
+    settings = _require_runtime()
+    return ConnectionPool(
+        conninfo=_psycopg_conninfo(settings.chat_db_url),
+        min_size=1,
+        max_size=4,
+        max_idle=300,
+        open=True,
+    )
+
+
+def _db_connection():
+    """Check out a pooled connection; single seam shared by all DB call sites."""
+    return _db_pool().connection()
+
+
 def _ensure_session_row(session_id: str, user_id: int, settings: Settings) -> None:
     """Upsert sessions row so message_store FK (V2 migration) is satisfied.
 
     Spring normally owns this table; when testing chat-service directly (e.g. Postman),
     we still need a parent session row before LangChain writes to message_store.
     """
-    with psycopg.connect(_psycopg_conninfo(settings.chat_db_url)) as conn:
+    with _db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -271,7 +288,7 @@ def get_nearest_station_availability(
     """
 
     stations: list[dict[str, Any]] = []
-    with psycopg.connect(_psycopg_conninfo(settings.chat_db_url)) as conn:
+    with _db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(query)
             rows = cur.fetchall()
