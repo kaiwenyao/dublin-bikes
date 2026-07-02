@@ -51,9 +51,13 @@ def reset_sse_starlette_appstatus_event():
 
 
 def _configured_settings() -> Settings:
+    # Settings fields only bind via their env-var validation aliases; field-name
+    # kwargs are dropped by extra="ignore". _env_file=None keeps the test
+    # hermetic when a local chat-service/.env exists.
     return Settings(
-        chat_db_url="postgresql://user:pass@localhost:5432/chat",
-        deepseek_api_key="test-key",
+        _env_file=None,
+        CHAT_DB_URL="postgresql://user:pass@localhost:5432/chat",
+        DEEPSEEK_API_KEY="test-key",
     )
 
 
