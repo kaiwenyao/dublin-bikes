@@ -8,17 +8,25 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from pydantic import ValidationError
 
 from main import (
     ASSISTANT_GREETING,
+    LOCATION_MISSING_INSTRUCTIONS,
     ChatRequest,
     HealthReply,
     MessageItem,
     Settings,
     TitleReply,
     get_nearest_station_availability,
+    _build_messages,
     _map_messages,
     _psycopg_conninfo,
     app,
@@ -27,6 +35,19 @@ from main import (
 
 client = TestClient(app)
 client_no_raise = TestClient(app, raise_server_exceptions=False)
+
+
+@pytest.fixture(autouse=True)
+def reset_sse_starlette_appstatus_event():
+    """Reset sse-starlette's exit-event singleton between tests.
+
+    AppStatus.should_exit_event binds to the first test's event loop; later
+    TestClient requests run on fresh loops and would raise RuntimeError.
+    Documented workaround from the sse-starlette README.
+    """
+    from sse_starlette.sse import AppStatus
+
+    AppStatus.should_exit_event = None
 
 
 def _configured_settings() -> Settings:
@@ -156,6 +177,60 @@ def test_get_nearest_station_availability_ranks_by_distance(mock_connect):
     assert result["stations"][0]["distance_m"] < 50
 
 
+def test_build_messages_includes_location_system_message_when_present():
+    req = ChatRequest(
+        session_id="sess-1",
+        user_id=42,
+        message="nearest station",
+        location={"lat": 53.3498, "lng": -6.2603, "accuracy_m": 25},
+    )
+    mem = MagicMock()
+    mem.messages = []
+    pending = HumanMessage(content="nearest station")
+
+    messages = _build_messages(req, mem, pending)
+
+    assert isinstance(messages[0], SystemMessage)
+    assert "53.3498" in messages[0].content
+    assert "-6.2603" in messages[0].content
+    assert "get_nearest_station_availability" in messages[0].content
+    assert messages[1].content == ASSISTANT_GREETING
+    assert messages[-1] is pending
+
+
+def test_build_messages_omits_accuracy_when_not_provided():
+    req = ChatRequest(
+        session_id="sess-1",
+        user_id=42,
+        message="nearest station",
+        location={"lat": 53.3498, "lng": -6.2603},
+    )
+    mem = MagicMock()
+    mem.messages = []
+    pending = HumanMessage(content="nearest station")
+
+    messages = _build_messages(req, mem, pending)
+
+    assert isinstance(messages[0], SystemMessage)
+    assert "53.3498" in messages[0].content
+    assert "accuracy" not in messages[0].content
+    assert "None" not in messages[0].content
+    assert " ." not in messages[0].content
+
+
+def test_build_messages_instructs_model_to_request_location_when_absent():
+    req = ChatRequest(session_id="sess-1", user_id=42, message="nearest station")
+    mem = MagicMock()
+    mem.messages = []
+    pending = HumanMessage(content="nearest station")
+
+    messages = _build_messages(req, mem, pending)
+
+    assert isinstance(messages[0], SystemMessage)
+    assert messages[0].content == LOCATION_MISSING_INSTRUCTIONS
+    assert "53.3498" not in messages[0].content
+
+
 def test_get_nearest_station_availability_requires_location():
     req = ChatRequest(session_id="sess-1", user_id=42, message="nearest station")
 
@@ -198,14 +273,46 @@ def test_chat_persists_human_and_ai_on_success(
     mock_llm.return_value.bind.assert_called_once_with(tools=tools)
     bound.invoke.assert_called_once()
     sent_messages = bound.invoke.call_args[0][0]
-    assert isinstance(sent_messages[0], AIMessage)
-    assert sent_messages[0].content == ASSISTANT_GREETING
+    assert isinstance(sent_messages[0], SystemMessage)
+    assert isinstance(sent_messages[1], AIMessage)
+    assert sent_messages[1].content == ASSISTANT_GREETING
     assert mem.add_message.call_count == 2
     human, ai = mem.add_message.call_args_list[0][0][0], mem.add_message.call_args_list[1][0][0]
     assert isinstance(human, HumanMessage)
     assert human.content == "hello"
     assert isinstance(ai, AIMessage)
     assert ai.content == "assistant reply"
+
+
+@patch("main._ensure_session_row")
+@patch("main._memory")
+@patch("main._llm")
+@patch("main._require_runtime", return_value=_configured_settings())
+def test_chat_sends_location_context_to_llm(
+    _mock_runtime, mock_llm, mock_memory, _mock_ensure_session
+):
+    mem = MagicMock()
+    mem.messages = []
+    mock_memory.return_value = mem
+    bound = _mock_tool_bound_llm(mock_llm, AIMessage(content="assistant reply"))
+
+    response = client.post(
+        "/chat",
+        json={
+            "session_id": "sess-1",
+            "user_id": 42,
+            "message": "nearest station?",
+            "location": {"lat": 53.3498, "lng": -6.2603, "accuracy_m": 25},
+        },
+    )
+
+    assert response.status_code == 200
+    sent_messages = bound.invoke.call_args[0][0]
+    assert isinstance(sent_messages[0], SystemMessage)
+    assert "53.3498" in sent_messages[0].content
+    assert "-6.2603" in sent_messages[0].content
+    persisted = [call[0][0] for call in mem.add_message.call_args_list]
+    assert not any(isinstance(message, SystemMessage) for message in persisted)
 
 
 @patch.dict(
@@ -340,12 +447,75 @@ def test_chat_stream_emits_chunks_and_done(
     assert any('{"content": "lo"}' in c for c in chunks)
     assert any(c.endswith("[DONE]") for c in chunks)
     mock_llm.return_value.bind.assert_called_once_with(tools=tools)
-    assert isinstance(bound.stream_messages[0][0], AIMessage)
-    assert bound.stream_messages[0][0].content == ASSISTANT_GREETING
+    assert isinstance(bound.stream_messages[0][0], SystemMessage)
+    assert isinstance(bound.stream_messages[0][1], AIMessage)
+    assert bound.stream_messages[0][1].content == ASSISTANT_GREETING
     assert mem.add_message.call_count == 2
     ai = mem.add_message.call_args_list[1][0][0]
     assert isinstance(ai, AIMessage)
     assert ai.content == "Hello"
+
+
+@patch("main._ensure_session_row")
+@patch("main._memory")
+@patch("main._llm")
+@patch("main._require_runtime", return_value=_configured_settings())
+def test_chat_stream_sends_location_context_to_llm(
+    _mock_runtime, mock_llm, mock_memory, _mock_ensure_session
+):
+    mem = MagicMock()
+    mem.messages = []
+    mock_memory.return_value = mem
+    bound = _mock_streaming_llm(
+        mock_llm,
+        [AIMessageChunk(content="Nearest station found.")],
+    )
+
+    with client.stream(
+        "POST",
+        "/chat/stream",
+        json={
+            "session_id": "sess-1",
+            "user_id": 42,
+            "message": "nearest station?",
+            "location": {"lat": 53.3498, "lng": -6.2603, "accuracy_m": 25},
+        },
+    ) as response:
+        assert response.status_code == 200
+        list(response.iter_lines())
+
+    first_message = bound.stream_messages[0][0]
+    assert isinstance(first_message, SystemMessage)
+    assert "53.3498" in first_message.content
+    assert "-6.2603" in first_message.content
+
+
+@patch("main._ensure_session_row")
+@patch("main._memory")
+@patch("main._llm")
+@patch("main._require_runtime", return_value=_configured_settings())
+def test_chat_stream_instructs_model_to_request_location_when_absent(
+    _mock_runtime, mock_llm, mock_memory, _mock_ensure_session
+):
+    mem = MagicMock()
+    mem.messages = []
+    mock_memory.return_value = mem
+    bound = _mock_streaming_llm(
+        mock_llm,
+        [AIMessageChunk(content="Please share your location.")],
+    )
+
+    with client.stream(
+        "POST",
+        "/chat/stream",
+        json={"session_id": "sess-1", "user_id": 42, "message": "nearest station?"},
+    ) as response:
+        assert response.status_code == 200
+        list(response.iter_lines())
+
+    first_message = bound.stream_messages[0][0]
+    assert isinstance(first_message, SystemMessage)
+    assert first_message.content == LOCATION_MISSING_INSTRUCTIONS
 
 
 @patch("main._ensure_session_row")
