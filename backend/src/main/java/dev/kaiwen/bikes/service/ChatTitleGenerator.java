@@ -15,7 +15,7 @@ public class ChatTitleGenerator {
     private final ChatServiceClient chatServiceClient;
     private final ChatSessionRepository chatSessionRepository;
 
-    @Async("mailExecutor")
+    @Async("titleExecutor")
     public void generate(String sessionId, String message) {
         try {
             String title = chatServiceClient.title(message);
