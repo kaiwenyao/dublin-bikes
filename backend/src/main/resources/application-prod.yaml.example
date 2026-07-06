@@ -33,7 +33,7 @@ app:
     connect-timeout-ms: 3000
     read-timeout-ms: 30000
     stream-timeout-ms: 120000
-    title-timeout-ms: 8000
+    title-timeout-ms: 30000
 
   prediction-service:
     base-url: http://dublin-bikes-prediction-service:8001
