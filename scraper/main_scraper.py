@@ -61,6 +61,18 @@ def scrape_stations():
                     bike_stands=item["bike_stands"],
                 )
                 session.add(station)
+            else:
+                # Keep static metadata in sync with the upstream API. Without this,
+                # mutable fields (notably bike_stands = capacity) freeze at first sight
+                # and feed stale capacity into predictions and the UI.
+                station.contract_name = item["contract_name"]
+                station.name = item["name"]
+                station.address = item["address"]
+                station.latitude = item["position"]["lat"]
+                station.longitude = item["position"]["lng"]
+                station.banking = item["banking"]
+                station.bonus = item["bonus"]
+                station.bike_stands = item["bike_stands"]
 
             # --- Step 2: Process Availability (dynamic data) ---
             availability = Availability(
