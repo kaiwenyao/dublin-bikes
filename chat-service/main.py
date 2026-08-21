@@ -459,6 +459,7 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
     async def event_generator():
         chunks: list[str] = []
         persisted = False
+        human_persisted = False
         try:
             messages = _build_messages(req, mem, pending)
             llm_with_tools = _llm(streaming=True).bind(tools=tools)
@@ -492,6 +493,7 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
                 )
 
             mem.add_message(pending)
+            human_persisted = True
             mem.add_message(AIMessage(content="".join(chunks)))
             persisted = True
             yield {"data": "[DONE]"}
@@ -501,7 +503,10 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
         finally:
             if chunks and not persisted:
                 try:
-                    mem.add_message(pending)
+                    # The human message may already be stored; re-adding it would
+                    # duplicate the user's turn in history (and the LLM context).
+                    if not human_persisted:
+                        mem.add_message(pending)
                     mem.add_message(AIMessage(content="".join(chunks)))
                 except Exception:
                     logger.exception(
