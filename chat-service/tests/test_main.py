@@ -406,6 +406,45 @@ def test_chat_stream_instructs_model_to_request_location_when_absent(
 @patch("main._memory")
 @patch("main._llm")
 @patch("main._require_runtime", return_value=_configured_settings())
+def test_chat_stream_does_not_duplicate_human_message_when_ai_persist_fails(
+    _mock_runtime, mock_llm, mock_memory, _mock_ensure_session,
+):
+    """If the AI-message write fails after the human message was already stored,
+    the finally-block recovery must not append the human message a second time.
+    Regression guard for duplicated user turns in conversation history.
+    """
+    mem = MagicMock()
+    mem.messages = []
+    mock_memory.return_value = mem
+    _mock_streaming_llm(mock_llm, [AIMessageChunk(content="Hello")])
+
+    persisted: list = []
+
+    def add(msg):
+        # Human-message writes succeed; AI-message write fails (e.g. dropped conn).
+        if isinstance(msg, AIMessage):
+            raise RuntimeError("db write failed")
+        persisted.append(msg)
+
+    mem.add_message.side_effect = add
+
+    with client_no_raise.stream(
+        "POST",
+        "/chat/stream",
+        json={"session_id": "sess-1", "user_id": 42, "message": "hi"},
+    ) as response:
+        list(response.iter_lines())
+
+    human_count = sum(1 for m in persisted if isinstance(m, HumanMessage))
+    assert human_count == 1, (
+        f"human message persisted {human_count} times (expected 1)"
+    )
+
+
+@patch("main._ensure_session_row")
+@patch("main._memory")
+@patch("main._llm")
+@patch("main._require_runtime", return_value=_configured_settings())
 def test_chat_stream_does_not_persist_when_llm_fails_before_chunks(
     _mock_runtime, mock_llm, mock_memory, _mock_ensure_session
 ):
