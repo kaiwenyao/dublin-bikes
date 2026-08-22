@@ -36,7 +36,7 @@ DB_POOL_MAX_SIZE = 4
 DB_POOL_MAX_IDLE_S = 300  # recycle idle conns before NAT/Supabase reaping
 DB_POOL_CHECKOUT_TIMEOUT_S = 10  # fail a request fast instead of freezing 30s
 ASSISTANT_GREETING = (
-    "Hi! I'm your UCDSE assistant. Ask me about bike sharing, stations, "
+    "Hi! I'm your Dublin Bikes assistant. Ask me about bike sharing, stations, "
     "or sustainable mobility—or just say hello."
 )
 TOOL_CALLING_INSTRUCTIONS = (
