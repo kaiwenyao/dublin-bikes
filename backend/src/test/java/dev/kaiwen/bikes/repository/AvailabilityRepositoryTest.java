@@ -62,6 +62,29 @@ class AvailabilityRepositoryTest {
                         org.assertj.core.groups.Tuple.tuple(2, 2));
     }
 
+    @Test
+    void findLatestPerStation_returnsSingleRowWhenScraperWroteSameTimestampTwice() {
+        // Simulates the scraper writing rows every 5 minutes for a station whose
+        // JCDecaux last_update did NOT change between scrapes: the second row
+        // shares the same (number, timestamp) as the first; only id/requested_at
+        // differ (history sampling is intentional -- the chart plots requested_at).
+        // "Latest per station" must still return exactly ONE row per station.
+        persistAvailability(1, LocalDateTime.parse("2025-01-20T09:00:00"), 3, 10);
+        persistAvailability(1, LocalDateTime.parse("2025-01-20T09:00:00"), 3, 10);
+        persistAvailability(2, LocalDateTime.parse("2025-01-20T10:00:00"), 2, 15);
+        entityManager.flush();
+        entityManager.clear();
+
+        List<Availability> latest = availabilityRepository.findLatestPerStation();
+
+        assertThat(latest).hasSize(2);
+        assertThat(latest)
+                .extracting(Availability::getNumber, Availability::getAvailableBikes)
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple(1, 3),
+                        org.assertj.core.groups.Tuple.tuple(2, 2));
+    }
+
     private void persistStation(int number, String name) {
         Station station = new Station();
         station.setNumber(number);

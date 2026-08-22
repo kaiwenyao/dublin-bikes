@@ -18,25 +18,28 @@ public interface AvailabilityRepository extends JpaRepository<Availability, Inte
 
     @Query(
             value =
-                    "SELECT a.* FROM availability a "
-                            + "INNER JOIN ( "
-                            + "    SELECT number, MAX(timestamp) AS max_ts "
-                            + "    FROM availability "
-                            + "    GROUP BY number "
-                            + ") latest "
-                            + "ON a.number = latest.number AND a.timestamp = latest.max_ts",
+                    "SELECT id, number, available_bikes, available_bike_stands, status, "
+                            + "last_update, timestamp, requested_at "
+                            + "FROM ( "
+                            + "    SELECT a.*, ROW_NUMBER() OVER ( "
+                            + "        PARTITION BY a.number "
+                            + "        ORDER BY a.timestamp DESC, a.id DESC "
+                            + "    ) AS rn "
+                            + "    FROM availability a "
+                            + ") ranked WHERE ranked.rn = 1",
             nativeQuery = true)
     List<Availability> findLatestPerStation();
     @Query(
             value =
-                    "SELECT a.* FROM availability a "
-                            + "INNER JOIN ( "
-                            + "    SELECT number, MAX(timestamp) AS max_ts "
-                            + "    FROM availability "
-                            + "    WHERE timestamp >= :since "
-                            + "    GROUP BY number "
-                            + ") latest "
-                            + "ON a.number = latest.number AND a.timestamp = latest.max_ts",
+                    "SELECT id, number, available_bikes, available_bike_stands, status, "
+                            + "last_update, timestamp, requested_at "
+                            + "FROM ( "
+                            + "    SELECT a.*, ROW_NUMBER() OVER ( "
+                            + "        PARTITION BY a.number ORDER BY a.timestamp DESC, a.id DESC "
+                            + "    ) AS rn "
+                            + "    FROM availability a "
+                            + "    WHERE a.timestamp >= :since "
+                            + ") ranked WHERE ranked.rn = 1",
             nativeQuery = true)
     List<Availability> findLatestPerStationSince(@Param("since") LocalDateTime since);
 
