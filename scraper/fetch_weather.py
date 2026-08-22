@@ -196,6 +196,7 @@ def fetch_weather_and_store():
 
     except Exception as e:
         print(f"[{format_log_ts()}] Weather scrape error: {e}")
+        raise
 
 if __name__ == "__main__":
     fetch_weather_and_store()
