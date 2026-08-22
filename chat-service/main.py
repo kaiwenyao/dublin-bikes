@@ -230,6 +230,22 @@ def _memory(session_id: str, settings: Settings) -> SQLChatMessageHistory:
     )
 
 
+def _history_snapshot(mem: SQLChatMessageHistory) -> list[BaseMessage]:
+    """Synchronous history read (SQLChatMessageHistory uses a sync SQLAlchemy
+    engine); must only be called from a worker thread, not the event loop."""
+    return list(mem.messages)
+
+
+async def _load_history(mem: SQLChatMessageHistory) -> list[BaseMessage]:
+    """Fetch conversation history without blocking the asyncio event loop."""
+    return await run_in_threadpool(_history_snapshot, mem)
+
+
+async def _add_message(mem: SQLChatMessageHistory, message: BaseMessage) -> None:
+    """Persist one history message without blocking the asyncio event loop."""
+    await run_in_threadpool(mem.add_message, message)
+
+
 @lru_cache  # API key rotation requires container restart (cached client holds old key).
 def _llm(streaming: bool) -> ChatOpenAI:
     settings = _require_runtime()
@@ -405,18 +421,24 @@ def _location_system_message(location: GeoLocation | None) -> SystemMessage:
 
 
 def _build_messages(
-    req: ChatRequest, mem: SQLChatMessageHistory, pending: HumanMessage
+    req: ChatRequest, mem: SQLChatMessageHistory, pending: HumanMessage, history: list[BaseMessage] | None = None
 ) -> list[BaseMessage]:
     """Assemble the per-call prompt for the LLM.
 
     The leading SystemMessage carries request-scoped location context and must
     never be persisted to mem — history writes stay limited to the pending
     HumanMessage and the final AIMessage at the call sites.
+
+    Pass ``history`` (pre-fetched off the event loop) to avoid touching the
+    sync SQLAlchemy engine from the event loop; defaults to ``mem.messages``
+    for direct callers.
     """
+    if history is None:
+        history = _history_snapshot(mem)
     return [
         _location_system_message(req.location),
         AIMessage(content=ASSISTANT_GREETING),
-        *list(mem.messages),
+        *history,
         pending,
     ]
 
@@ -453,7 +475,7 @@ def health() -> HealthReply:
 async def chat_stream(req: ChatRequest) -> EventSourceResponse:
     settings = _require_runtime()
     await run_in_threadpool(_ensure_session_row, req.session_id, req.user_id, settings)
-    mem = _memory(req.session_id, settings)
+    mem = await run_in_threadpool(_memory, req.session_id, settings)
     pending = HumanMessage(content=req.message)
 
     async def event_generator():
@@ -461,7 +483,8 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
         persisted = False
         human_persisted = False
         try:
-            messages = _build_messages(req, mem, pending)
+            history = await _load_history(mem)
+            messages = _build_messages(req, mem, pending, history)
             llm_with_tools = _llm(streaming=True).bind(tools=tools)
             has_tool_observation = False
 
@@ -492,9 +515,9 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
                     or has_tool_observation
                 )
 
-            mem.add_message(pending)
+            await _add_message(mem, pending)
             human_persisted = True
-            mem.add_message(AIMessage(content="".join(chunks)))
+            await _add_message(mem, AIMessage(content="".join(chunks)))
             persisted = True
             yield {"data": "[DONE]"}
         except Exception:
@@ -506,8 +529,8 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
                     # The human message may already be stored; re-adding it would
                     # duplicate the user's turn in history (and the LLM context).
                     if not human_persisted:
-                        mem.add_message(pending)
-                    mem.add_message(AIMessage(content="".join(chunks)))
+                        await _add_message(mem, pending)
+                    await _add_message(mem, AIMessage(content="".join(chunks)))
                 except Exception:
                     logger.exception(
                         "failed to persist partial stream for session_id=%s",
