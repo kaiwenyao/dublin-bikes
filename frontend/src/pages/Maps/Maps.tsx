@@ -172,6 +172,12 @@ export default function Maps() {
   // References for custom route markers
   const journeyMarkersRef = useRef<HTMLElement[]>([])
 
+  // Bumped each time the map element is (re)created, so effects that draw onto
+  // the map (e.g. journey routes) re-run against the new instance instead of
+  // silently losing their drawings when the map is recreated (e.g. after the
+  // user's geolocation resolves or "Locate me" updates userPosition).
+  const [mapGeneration, setMapGeneration] = useState(0)
+
 
 
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY
@@ -532,6 +538,9 @@ export default function Maps() {
           streetViewControl: false,
           fullscreenControl: false,
         })
+        // Signal that the new map instance is ready (innerMap exists), so
+        // map-drawing effects (e.g. journey routes) re-run on this map.
+        setMapGeneration((g) => g + 1)
         return
       }
       if (retries < 20) {
@@ -702,7 +711,7 @@ export default function Maps() {
 
     mapEl.innerMap.fitBounds(bounds, { top: 80, bottom: 80, left: 340, right: 80 })
 
-  }, [journeyResult, scriptLoaded, stations])
+  }, [journeyResult, scriptLoaded, stations, mapGeneration])
 
   const handleLocate = () => {
     if (!navigator.geolocation) {
