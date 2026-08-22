@@ -471,17 +471,11 @@ export default function Chat() {
           toast.error(err.message)
         },
       })
-    } catch (err) {
-      if (!controller.signal.aborted && !isAbortLikeError(err)) {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId
-              ? { ...m, content: `[Request failed] ${err instanceof Error ? err.message : 'Unknown error'}` }
-              : m
-          )
-        )
-        toast.error(err instanceof Error ? err.message : 'Request failed')
-      }
+    } catch {
+      // Stream failures are surfaced via the onError callback above.
+      // chatStreamAPI reports every rejection through onError before it
+      // rejects (and consumes the internal retry signal itself), so handling
+      // the error again here would duplicate the toast and state update.
     } finally {
       finishSending()
     }
