@@ -84,6 +84,8 @@ const isRetryAfterRefreshError = (error: Error): boolean =>
   error.message === RETRY_AFTER_REFRESH
 const CHAT_AUTH_FAILURE_MESSAGE = 'Session expired. Please sign in again.'
 const STREAM_EMPTY_MESSAGE = 'Stream closed before any response content.'
+const STREAM_TRUNCATED_MESSAGE =
+  'Stream ended unexpectedly before the response was complete.'
 const isCompletionMarker = (chunk: string): boolean => {
   const normalized = chunk.trim()
   return normalized === '[DONE]' || normalized === '"[DONE]"'
@@ -151,8 +153,17 @@ function openStream(
         onMessage(ev.data)
       },
       onclose() {
-        if (!completed && !receivedContent) {
-          rejectOnce(new Error(STREAM_EMPTY_MESSAGE))
+        if (!completed) {
+          // The upstream returns [DONE] only after a fully-successful
+          // generation. A close without that marker means the response was
+          // truncated (LLM/tool error, backend relay failure, network drop):
+          // surface it as an error instead of presenting the partial
+          // answer as the final answer.
+          rejectOnce(
+            receivedContent
+              ? new Error(STREAM_TRUNCATED_MESSAGE)
+              : new Error(STREAM_EMPTY_MESSAGE)
+          )
           return
         }
         notifyDoneOnce()
