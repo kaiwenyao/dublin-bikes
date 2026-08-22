@@ -445,6 +445,44 @@ def test_chat_stream_does_not_duplicate_human_message_when_ai_persist_fails(
 @patch("main._memory")
 @patch("main._llm")
 @patch("main._require_runtime", return_value=_configured_settings())
+def test_chat_stream_offloads_memory_io_off_event_loop(
+    _mock_runtime, mock_llm, mock_memory, _mock_ensure_best_sess
+):
+    """SQLChatMessageHistory reads/writes are sync DB I/O; inside the async SSE
+    generator they must be routed through run_in_threadpool, otherwise every
+    stream blocks the event loop for the whole DB round trip.
+    """
+    mem = MagicMock()
+    mem.messages = []
+    mock_memory.return_value = mem
+    _mock_streaming_llm(mock_llm, [AIMessageChunk(content="Hello")])
+
+    offloaded: list[object] = []
+
+    async def record_run_in_threadpool(func, *args, **kwargs):
+        offloaded.append(func)
+        return func(*args, **kwargs)
+
+    with patch("main.run_in_threadpool", side_effect=record_run_in_threadpool):
+        with client.stream(
+            "POST",
+            "/chat/stream",
+            json={"session_id": "sess-1", "user_id": 42, "message": "hi"},
+        ) as response:
+            assert response.status_code == 200
+            list(response.iter_lines())
+
+    names = {c.__name__ if hasattr(c, "__name__") else str(c) for c in offloaded}
+    assert any("add_message" in n for n in names), (
+        f"chat memory writes must be offloaded off the event loop; "
+        f"run_in_threadpool received: {sorted(names)}"
+    )
+
+
+@patch("main._ensure_session_row")
+@patch("main._memory")
+@patch("main._llm")
+@patch("main._require_runtime", return_value=_configured_settings())
 def test_chat_stream_does_not_persist_when_llm_fails_before_chunks(
     _mock_runtime, mock_llm, mock_memory, _mock_ensure_session
 ):
