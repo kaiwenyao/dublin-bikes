@@ -64,7 +64,7 @@ const WELCOME_MESSAGE: Message = {
   id: 'welcome',
   role: 'assistant',
   content:
-    "Hi! I'm your UCDSE assistant. Ask me about bike sharing, stations, or sustainable mobility—or just say hello.",
+    "Hi! I'm your Dublin Bikes assistant. Ask me about bike sharing, stations, or sustainable mobility—or just say hello.",
   createdAt: new Date(),
 }
 
@@ -896,7 +896,7 @@ export default function Chat() {
             <div>
               <h1 className="text-2xl font-bold text-foreground">AI Chat</h1>
               <p className="mt-1 text-sm text-muted-foreground">
-                Ask about bike sharing, stations, or anything UCDSE-related.
+                Ask about bike sharing, stations, or anything Dublin Bikes related.
               </p>
             </div>
 
@@ -1041,7 +1041,7 @@ export default function Chat() {
                     </div>
 
                     <h2 className="mt-6 text-xl font-bold tracking-tight text-foreground sm:text-2xl">
-                      Hello! I&apos;m your UCDSE Assistant
+                      Hello! I&apos;m your Dublin Bikes Assistant
                     </h2>
                     <p className="mx-auto mt-3 max-w-lg text-sm leading-6 text-muted-foreground sm:text-base sm:leading-7">
                       Ask me about bike sharing, station availability, cycling routes, or the
