@@ -160,16 +160,6 @@ export default function Chat() {
   const submitLockRef = useRef(false)
   const isMountedRef = useRef(true)
 
-  const handleChatPanelWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    const list = messageListRef.current
-    if (!list) return
-
-    // Pointer inside chat panel: always consume wheel and scroll message list only.
-    e.preventDefault()
-    e.stopPropagation()
-    list.scrollTop += e.deltaY
-  }
-
   const scrollMessageListToBottom = () => {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
@@ -778,7 +768,6 @@ export default function Chat() {
             <div
               ref={messageListRef}
               className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 space-y-4"
-              onWheelCapture={handleChatPanelWheel}
             >
               {loadingHistory ? (
                 <p className="text-xs text-muted-foreground">Loading conversation...</p>
