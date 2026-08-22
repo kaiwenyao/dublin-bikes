@@ -120,6 +120,14 @@ const createServer = () =>
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
       })
+      if (state.truncateNextStream) {
+        // Simulate upstream failure mid-stream: some content flushed, then
+        // connection closes WITHOUT the terminal [DONE] marker.
+        state.truncateNextStream = false
+        response.write('data: {"content":"partial"}\n\n')
+        response.end()
+        return
+      }
       response.end('data: {"content":"verified"}\n\ndata: [DONE]\n\n')
       return
     }
@@ -191,6 +199,7 @@ beforeEach(() => {
   state.streamRequests = 0
   state.failNextStreamCount = 0
   state.refreshDelayMs = 0
+  state.truncateNextStream = false
   state.lastStreamBody = null
   validAccessToken = fakeJwt()
   refreshToken = 'refresh-token'
@@ -274,6 +283,32 @@ test('does not refresh or retry again when a just-refreshed token gets a stream 
 
   assert.equal(state.refreshRequests, 1)
   assert.equal(state.streamRequests, 1)
+})
+
+test('rejects when the stream closes without the terminal [DONE] marker', async () => {
+  window.localStorage.setItem('access_token', validAccessToken)
+  state.truncateNextStream = true
+
+  let doneCalled = false
+  let errorCalled = false
+
+  await assert.rejects(
+    chatStreamAPI({
+      chat_id: 'truncated_stream',
+      message: 'hello',
+      onMessage() {},
+      onDone() {
+        doneCalled = true
+      },
+      onError() {
+        errorCalled = true
+      },
+    }),
+    /Stream ended|interrupted|incomplete/
+  )
+
+  assert.equal(doneCalled, false, 'onDone must not fire for a truncated stream')
+  assert.equal(errorCalled, true, 'onError must report the truncated stream')
 })
 
 test('shares one refresh across concurrent chat stream requests', async () => {
