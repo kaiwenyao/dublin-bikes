@@ -39,6 +39,7 @@ frontend/.nuxt/
 frontend/.cache/
 frontend/.parcel-cache/
 frontend/coverage/
+frontend/.playwright-cli/
 
 # Logs
 *.log
