@@ -414,10 +414,16 @@ export default function Maps() {
     container.appendChild(gmpMap)
     gmpMapRef.current = gmpMap
 
-    /** Streamline Google default controls: via SDK exposed innerMap.setOptions keep only zoom, disable others */
-    let retries = 0
+    /** Streamline Google default controls: via SDK exposed innerMap.setOptions keep only zoom, disable others.
+       Poll until innerMap becomes available rather than giving up after a fixed number of retries: on slow
+       networks/devices the web component can take longer than ~1s to expose innerMap, and abandoning the wait
+       would leave mapGeneration never incremented, so the recenter / station-marker / journey-route effects
+       (which key off it) would never run and the user would be stuck on the default view. */
+    let polling = true
+    let pendingTimer: ReturnType<typeof setTimeout> | null = null
     const applyMapOptions = () => {
       const mapEl = gmpMapRef.current
+      if (!polling) return
       if (mapEl?.innerMap) {
         mapEl.innerMap.setOptions({
           disableDefaultUI: true,
@@ -431,14 +437,13 @@ export default function Maps() {
         setMapGeneration((g) => g + 1)
         return
       }
-      if (retries < 20) {
-        retries += 1
-        setTimeout(applyMapOptions, 50)
-      }
+      pendingTimer = setTimeout(applyMapOptions, 50)
     }
     setTimeout(applyMapOptions, 0)
 
     return () => {
+      polling = false
+      if (pendingTimer) clearTimeout(pendingTimer)
       gmpMapRef.current = null
       container.innerHTML = ''
     }
