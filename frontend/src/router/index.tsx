@@ -1,6 +1,7 @@
 import { lazy } from 'react'
 import { createBrowserRouter } from 'react-router-dom'
 import Layout from '@/components/Layout'
+import RouteErrorFallback from '@/components/RouteErrorFallback'
 
 const Home = lazy(() => import('@/pages/Home/Home'))
 const Activate = lazy(() => import('@/pages/Activate/Activate'))
@@ -16,6 +17,7 @@ export const router = createBrowserRouter([
   {
     path: '/',
     element: <Layout />,
+    errorElement: <RouteErrorFallback />,
     children: [
       {
         index: true,
