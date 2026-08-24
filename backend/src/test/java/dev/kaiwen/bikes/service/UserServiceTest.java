@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import dev.kaiwen.bikes.config.VerificationProperties;
 import dev.kaiwen.bikes.dto.ApiCodes;
+import dev.kaiwen.bikes.dto.request.ActivateByTokenRequestDTO;
 import dev.kaiwen.bikes.dto.request.LoginRequestDTO;
 import dev.kaiwen.bikes.dto.request.SendVerificationCodeRequestDTO;
 import dev.kaiwen.bikes.dto.request.UserRegistrationRequestDTO;
@@ -106,6 +107,23 @@ class UserServiceTest {
                 .isEqualTo("verification code sent");
         verify(userRepository, never()).save(any(User.class));
         verify(mailService, never()).sendVerificationEmail(any(), any(), any(int.class), any());
+    }
+
+    @Test
+    void activateByToken_rejectsExpiredToken() {
+        User user = inactiveUser();
+        user.setActivationToken("expired-token");
+        user.setEmailVerificationCodeExpiresAt(LocalDateTime.now(ZoneOffset.UTC).minusSeconds(1));
+        when(userRepository.findByActivationToken("expired-token")).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(
+                        () ->
+                                userService.activateByToken(
+                                        new ActivateByTokenRequestDTO("expired-token")))
+                .isInstanceOf(AuthException.class)
+                .hasMessage("invalid credentials");
+        assertThat(user.getIsActive()).isFalse();
+        verify(userRepository, never()).save(any(User.class));
     }
 
     @Test
