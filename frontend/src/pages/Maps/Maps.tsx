@@ -5,6 +5,7 @@ import { getStationsAPI, getStationAvailabilityAPI, getStationsStatusAPI, getSta
 import { planJourneyAPI, type JourneyPlanResponse } from '@/api/journey'
 import Weather from '@/components/Weather'
 import { parseBackendUtcDateTime, formatChartAxisTime, formatChartTooltipTime } from '@/lib/datetime'
+import { createMapCameraIntent } from '@/lib/map-camera-intent'
 
 
 // ========== Google Maps API Related Constants ==========
@@ -176,9 +177,12 @@ export default function Maps() {
   // created once and reused for the life of the page; station markers are
   // redrawn independently. Recreating <gmp-map> resets its center/zoom
   // attributes, which snaps the map back during a drag (the original bug).
-  const gmpMapRef = useRef<(HTMLElement & { innerMap?: google.maps.Map }) | null>(null)
+  const gmpMapRef = useRef<google.maps.MapElement | null>(null)
   const stationMarkersRef = useRef<HTMLElement[]>([])
   const userMarkerRef = useRef<HTMLElement | null>(null)
+  // Async geolocation must not override a newer drag. This one-shot intent
+  // records whether a location result is still allowed to move the camera.
+  const cameraIntentRef = useRef(createMapCameraIntent())
   // Marker tooltip state lives in refs so it survives marker redraws and can be
   // cleaned up without recreating the map element.
   const activeTooltipRef = useRef<HTMLDivElement | null>(null)
@@ -263,12 +267,14 @@ export default function Maps() {
   /** Automatically locate to user's position when entering page */
   useEffect(() => {
     if (!navigator.geolocation) return
+    const recenterRequestId = cameraIntentRef.current.beginRecenterRequest()
     queueMicrotask(() => {
       setLocationError(null)
       setLocationLoading(true)
     })
     navigator.geolocation.getCurrentPosition(
       (position) => {
+        cameraIntentRef.current.completeRecenterRequest(recenterRequestId)
         setUserPosition({
           lat: position.coords.latitude,
           lng: position.coords.longitude,
@@ -348,8 +354,8 @@ export default function Maps() {
 
   // ---- Map element creation (runs once when the SDK loads) ----------------------
   // The <gmp-map> element is created a single time and reused for the lifetime of
-  // the page. Station markers and recenters are applied in their own effects via
-  // innerMap, so they never rebuild the element. This is what prevents the map
+  // the page. Station markers and recenters are applied independently, so they
+  // never rebuild the element. This is what prevents the map
   // from snapping back to its initial center while the user drags: the original
   // bug rebuilt <gmp-map> (re-asserting its center/zoom attributes) on every data
   // or location update, which interrupted and reverted in-flight drags.
@@ -393,10 +399,8 @@ export default function Maps() {
 
     /* Create map root node: <gmp-map> registered by Google Maps JS SDK, mounted and rendered by SDK.
        Initialized to the default view; the user's resolved location is applied by the
-       recenter effect via innerMap (never by rebuilding this element). */
-    const gmpMap = document.createElement('gmp-map') as HTMLElement & {
-      innerMap?: google.maps.Map
-    }
+       recenter effect (never by rebuilding this element). */
+    const gmpMap = document.createElement('gmp-map') as google.maps.MapElement
     gmpMap.setAttribute('center', DEFAULT_CENTER)
     gmpMap.setAttribute('zoom', String(DEFAULT_ZOOM))
     gmpMap.setAttribute('map-id', DEMO_MAP_ID)
@@ -421,6 +425,7 @@ export default function Maps() {
        (which key off it) would never run and the user would be stuck on the default view. */
     let polling = true
     let pendingTimer: ReturnType<typeof setTimeout> | null = null
+    let dragStartListener: google.maps.MapsEventListener | null = null
     const applyMapOptions = () => {
       const mapEl = gmpMapRef.current
       if (!polling) return
@@ -431,6 +436,12 @@ export default function Maps() {
           mapTypeControl: false,
           streetViewControl: false,
           fullscreenControl: false,
+        })
+        // A drag is the newest camera intent. Invalidate a geolocation result
+        // that is still in flight (or waiting for this map instance) so it
+        // cannot jump the camera away from the user's chosen position.
+        dragStartListener = mapEl.innerMap.addListener('dragstart', () => {
+          cameraIntentRef.current.cancelPendingRecenter()
         })
         // Signal that the map instance is ready (innerMap exists), so
         // map-drawing effects (station markers, journey routes) re-run on it.
@@ -444,21 +455,20 @@ export default function Maps() {
     return () => {
       polling = false
       if (pendingTimer) clearTimeout(pendingTimer)
+      dragStartListener?.remove()
       gmpMapRef.current = null
       container.innerHTML = ''
     }
   }, [scriptLoaded, hideTooltipNow])
 
   // ---- Recenters & user marker (runs when the resolved position changes) --------
-  // Recenter uses innerMap.setCenter/setZoom so it never rebuilds the element and
-  // never interrupts a drag. This also applies the initial center once the user's
-  // location resolves and the map instance is ready (creation always starts from
-  // DEFAULT_CENTER; the real view is set here via mapGeneration readiness).
+  // The location marker always follows the resolved position. Camera movement is
+  // one-shot and is skipped when a newer drag invalidated the request, preventing
+  // a late geolocation callback from interrupting the user's first interaction.
   useEffect(() => {
     if (!userPosition) return
     const mapEl = gmpMapRef.current
-    const inner = mapEl?.innerMap
-    if (!inner) return
+    if (!mapEl?.innerMap) return
 
     // Add or move the user-location marker without touching station markers.
     let userMarker = userMarkerRef.current
@@ -478,8 +488,12 @@ export default function Maps() {
       )
     }
 
-    inner.setCenter({ lat: userPosition.lat, lng: userPosition.lng })
-    inner.setZoom(USER_ZOOM)
+    if (cameraIntentRef.current.consumePendingRecenter()) {
+      // Use MapElement's public camera properties so the component state and
+      // its inner map cannot diverge and reassert a stale default view later.
+      mapEl.center = { lat: userPosition.lat, lng: userPosition.lng }
+      mapEl.zoom = USER_ZOOM
+    }
   }, [userPosition, mapGeneration])
 
   // ---- Station markers (redrawn when stations/status/map change) ----------------
@@ -766,8 +780,10 @@ export default function Maps() {
     }
     setLocationError(null)
     setLocationLoading(true)
+    const recenterRequestId = cameraIntentRef.current.beginRecenterRequest()
     navigator.geolocation.getCurrentPosition(
       (position) => {
+        cameraIntentRef.current.completeRecenterRequest(recenterRequestId)
         setUserPosition({
           lat: position.coords.latitude,
           lng: position.coords.longitude,
