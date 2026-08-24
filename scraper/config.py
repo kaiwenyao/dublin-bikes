@@ -24,6 +24,14 @@ if not DATABASE_URL:
 SCRAPE_INTERVAL_SECONDS = int(os.environ.get("SCRAPE_INTERVAL_SECONDS", "300"))
 RETRY_INTERVAL_SECONDS = int(os.environ.get("RETRY_INTERVAL_SECONDS", "60"))
 
+# Retention policy: availability rows older than this many days are purged.
+# Keeps the database small (Supabase free tier is capped at 0.5 GB).
+AVAILABILITY_RETENTION_DAYS = int(os.environ.get("AVAILABILITY_RETENTION_DAYS", "30"))
+# How often the retention purge runs (seconds).
+DELETE_OLD_AVAILABILITY_INTERVAL_SECONDS = int(
+    os.environ.get("DELETE_OLD_AVAILABILITY_INTERVAL_SECONDS", "3600")
+)
+
 OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY")
 
 # For Geocoding API: target city

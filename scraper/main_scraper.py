@@ -6,6 +6,7 @@ from database import SessionLocal
 from fetch_stations import fetch_stations
 from fetch_weather import fetch_weather_and_store
 from models import Availability, Station
+from retention import delete_old_availability, retention_worker
 from time_utils import format_log_ts, from_unix_ms_utc, utc_now, utc_now_naive
 
 
@@ -118,9 +119,20 @@ def weather_worker():
 
 # Main loop (table schema is maintained by flask-app migrations; run `flask db upgrade` first)
 if __name__ == "__main__":
+    # Purge old availability rows once at startup, then keep purging on a schedule.
+    try:
+        deleted = delete_old_availability()
+        print(f"[{format_log_ts()}] Startup retention purge: deleted {deleted} old availability rows")
+    except Exception as e:
+        print(f"[{format_log_ts()}] Startup retention purge error: {e}")
+
     # Start weather scraping thread
     t_weather = threading.Thread(target=weather_worker, daemon=True)
     t_weather.start()
+
+    # Start retention purge thread
+    t_retention = threading.Thread(target=retention_worker, daemon=True)
+    t_retention.start()
 
     while True:
         try:
