@@ -114,6 +114,10 @@ public class UserService {
                 userRepository
                         .findByActivationToken(request.token())
                         .orElseThrow(() -> new AuthException(AUTH_FAILED));
+        if (user.getEmailVerificationCodeExpiresAt() == null
+                || utcNow().isAfter(user.getEmailVerificationCodeExpiresAt())) {
+            throw new AuthException(AUTH_FAILED);
+        }
         activateUser(user);
         return userMapper.toVO(reload(user.getId()));
     }
