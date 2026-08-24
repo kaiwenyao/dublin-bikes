@@ -37,7 +37,9 @@ def delete_old_availability(retention_days: int | None = None) -> int:
     ``AVAILABILITY_RETENTION_DAYS``. Rows are deleted in batches of
     ``_DELETE_BATCH_SIZE`` so no single transaction is too large.
     """
-    retention_days = retention_days or AVAILABILITY_RETENTION_DAYS
+    retention_days = (
+        retention_days if retention_days is not None else AVAILABILITY_RETENTION_DAYS
+    )
     cutoff = utc_now_naive() - timedelta(days=retention_days)
 
     session = SessionLocal()
@@ -66,8 +68,13 @@ def delete_old_availability(retention_days: int | None = None) -> int:
 
 
 def retention_worker() -> None:
-    """Run the retention purge on a fixed interval (default 1 hour)."""
+    """Run the retention purge on a fixed interval (default 1 hour).
+
+    Sleeps first so the worker does not immediately re-run the purge that
+    already ran synchronously at container startup.
+    """
     while True:
+        time.sleep(DELETE_OLD_AVAILABILITY_INTERVAL_SECONDS)
         try:
             deleted = delete_old_availability()
             print(
@@ -76,4 +83,3 @@ def retention_worker() -> None:
             )
         except Exception as e:
             print(f"[{format_log_ts()}] Retention purge error: {e}")
-        time.sleep(DELETE_OLD_AVAILABILITY_INTERVAL_SECONDS)

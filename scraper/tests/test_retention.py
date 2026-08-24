@@ -64,6 +64,15 @@ class RetentionTest(unittest.TestCase):
         self.assertEqual(deleted, 0)
         self.assertEqual(self.session.query(Availability).count(), 1)
 
+    def test_retention_days_zero_deletes_everything(self):
+        # retention_days=0 must mean "delete everything", not fall back to the
+        # default retention window (0 is falsy, so `or` would silently ignore it).
+        self._add_availability(days_ago=1)
+        self._add_availability(days_ago=2)
+        deleted = retention.delete_old_availability(retention_days=0)
+        self.assertEqual(deleted, 2)
+        self.assertEqual(self.session.query(Availability).count(), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
