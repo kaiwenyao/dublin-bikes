@@ -1,5 +1,5 @@
 /// <reference types="@types/google.maps" />
-import { useEffect, useRef, useState, useMemo } from 'react'
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { getStationsAPI, getStationAvailabilityAPI, getStationsStatusAPI, getStationPredictionAPI, type StationVO, type ChartData as PredictionChartData, type StationAvailabilityVO } from '@/api/station'
 import { planJourneyAPI, type JourneyPlanResponse } from '@/api/journey'
@@ -172,10 +172,22 @@ export default function Maps() {
   // References for custom route markers
   const journeyMarkersRef = useRef<HTMLElement[]>([])
 
-  // Bumped each time the map element is (re)created, so effects that draw onto
-  // the map (e.g. journey routes) re-run against the new instance instead of
-  // silently losing their drawings when the map is recreated (e.g. after the
-  // user's geolocation resolves or "Locate me" updates userPosition).
+  // The live <gmp-map> element and its station markers. The map element is
+  // created once and reused for the life of the page; station markers are
+  // redrawn independently. Recreating <gmp-map> resets its center/zoom
+  // attributes, which snaps the map back during a drag (the original bug).
+  const gmpMapRef = useRef<(HTMLElement & { innerMap?: google.maps.Map }) | null>(null)
+  const stationMarkersRef = useRef<HTMLElement[]>([])
+  const userMarkerRef = useRef<HTMLElement | null>(null)
+  // Marker tooltip state lives in refs so it survives marker redraws and can be
+  // cleaned up without recreating the map element.
+  const activeTooltipRef = useRef<HTMLDivElement | null>(null)
+  const activeMarkerRef = useRef<HTMLElement | null>(null)
+  const hideTimeoutIdRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Bumped once when the map's innerMap instance becomes available, so effects
+  // that draw onto the map (station markers, journey routes) re-run against the
+  // real instance instead of racing it.
   const [mapGeneration, setMapGeneration] = useState(0)
 
 
@@ -271,16 +283,78 @@ export default function Maps() {
     )
   }, [])
 
-  /**
-   * [Map Rendering] Create and mount map when Google Maps SDK loaded and container exists
-   * Rendering flow:
-   * 1. Use Google's Web Component: document.createElement('gmp-map'), the <gmp-map> registered by SDK internally calls Maps JavaScript API to render map tiles
-   * 2. Set center, zoom, map-id and other properties to determine map center and zoom level
-   * 3. Create gmp-advanced-marker markers (user position + stations), append to gmp-map
-   * 4. Mount gmpMap to div corresponding to ref (mapContainerRef), map displays on page
-   */
+  // ---- Tooltip helpers (stable via useCallback, backed by refs) -----------------
+  const setMarkerZIndex = useCallback((marker: HTMLElement, zIndex: number) => {
+    marker.setAttribute('z-index', String(zIndex))
+    marker.style.zIndex = String(zIndex)
+    ;(marker as HTMLElement & { zIndex?: number }).zIndex = zIndex
+  }, [])
+
+  const clearHideTimeout = useCallback(() => {
+    if (hideTimeoutIdRef.current) {
+      clearTimeout(hideTimeoutIdRef.current)
+      hideTimeoutIdRef.current = null
+    }
+  }, [])
+
+  const showTooltip = useCallback((marker: HTMLElement, tooltip: HTMLDivElement) => {
+    clearHideTimeout()
+    if (activeTooltipRef.current && activeTooltipRef.current !== tooltip) {
+      activeTooltipRef.current.classList.add('hidden')
+    }
+    if (activeMarkerRef.current && activeMarkerRef.current !== marker) {
+      setMarkerZIndex(activeMarkerRef.current, MARKER_BASE_Z_INDEX)
+    }
+    tooltip.classList.remove('hidden')
+    setMarkerZIndex(marker, MARKER_ACTIVE_Z_INDEX)
+    activeTooltipRef.current = tooltip
+    activeMarkerRef.current = marker
+  }, [clearHideTimeout, setMarkerZIndex])
+
+  /** Delayed hide, allows mouse to move from dot to tooltip without flickering */
+  const hideTooltip = useCallback((marker: HTMLElement, tooltip: HTMLDivElement) => {
+    clearHideTimeout()
+    hideTimeoutIdRef.current = setTimeout(() => {
+      tooltip.classList.add('hidden')
+      setMarkerZIndex(marker, MARKER_BASE_Z_INDEX)
+      if (activeTooltipRef.current === tooltip) activeTooltipRef.current = null
+      if (activeMarkerRef.current === marker) activeMarkerRef.current = null
+      hideTimeoutIdRef.current = null
+    }, 150)
+  }, [clearHideTimeout, setMarkerZIndex])
+
+  /** Hide immediately (click toggle / click map blank area) */
+  const hideTooltipNow = useCallback((marker: HTMLElement, tooltip: HTMLDivElement) => {
+    clearHideTimeout()
+    tooltip.classList.add('hidden')
+    setMarkerZIndex(marker, MARKER_BASE_Z_INDEX)
+    if (activeTooltipRef.current === tooltip) activeTooltipRef.current = null
+    if (activeMarkerRef.current === marker) activeMarkerRef.current = null
+  }, [clearHideTimeout, setMarkerZIndex])
+
+  const resetChartState = useCallback(() => {
+    setTimeRange('history')
+    setHistoryRange('4h')
+    setPredictionData([])
+    setChartLoading(false)
+  }, [])
+
+  const selectStation = useCallback((s: StationVO) => {
+    setDetailLoading(true)
+    setStationDetail(null)
+    resetChartState()
+    setSelectedStation(s)
+  }, [resetChartState])
+
+  // ---- Map element creation (runs once when the SDK loads) ----------------------
+  // The <gmp-map> element is created a single time and reused for the lifetime of
+  // the page. Station markers and recenters are applied in their own effects via
+  // innerMap, so they never rebuild the element. This is what prevents the map
+  // from snapping back to its initial center while the user drags: the original
+  // bug rebuilt <gmp-map> (re-asserting its center/zoom attributes) on every data
+  // or location update, which interrupted and reverted in-flight drags.
   useEffect(() => {
-    if (!scriptLoaded || !mapContainerRef.current) return
+    if (!scriptLoaded || !mapContainerRef.current || gmpMapRef.current) return
 
     const container = mapContainerRef.current
     container.innerHTML = ''
@@ -317,78 +391,110 @@ export default function Maps() {
       }
     }
 
-    const center = userPosition
-      ? `${userPosition.lat},${userPosition.lng}`
-      : DEFAULT_CENTER
-    const zoom = userPosition ? USER_ZOOM : DEFAULT_ZOOM
-
-    /* Create map root node: <gmp-map> registered by Google Maps JS SDK, mounted and rendered by SDK */
-    const gmpMap = document.createElement('gmp-map')
-    gmpMap.setAttribute('center', center)
-    gmpMap.setAttribute('zoom', String(zoom))
+    /* Create map root node: <gmp-map> registered by Google Maps JS SDK, mounted and rendered by SDK.
+       Initialized to the default view; the user's resolved location is applied by the
+       recenter effect via innerMap (never by rebuilding this element). */
+    const gmpMap = document.createElement('gmp-map') as HTMLElement & {
+      innerMap?: google.maps.Map
+    }
+    gmpMap.setAttribute('center', DEFAULT_CENTER)
+    gmpMap.setAttribute('zoom', String(DEFAULT_ZOOM))
     gmpMap.setAttribute('map-id', DEMO_MAP_ID)
     gmpMap.style.height = '100%'
     gmpMap.style.width = '100%'
     gmpMap.style.minHeight = '0'
 
-    let activeTooltip: HTMLDivElement | null = null
-    let activeMarker: HTMLElement | null = null
-    let hideTimeoutId: ReturnType<typeof setTimeout> | null = null
-
-    const setMarkerZIndex = (marker: HTMLElement, zIndex: number) => {
-      marker.setAttribute('z-index', String(zIndex))
-      marker.style.zIndex = String(zIndex)
-        ; (marker as HTMLElement & { zIndex?: number }).zIndex = zIndex
-    }
-
-    const clearHideTimeout = () => {
-      if (hideTimeoutId) {
-        clearTimeout(hideTimeoutId)
-        hideTimeoutId = null
+    gmpMap.addEventListener('click', () => {
+      if (activeTooltipRef.current && activeMarkerRef.current) {
+        hideTooltipNow(activeMarkerRef.current, activeTooltipRef.current)
       }
-    }
+    })
 
-    const showTooltip = (marker: HTMLElement, tooltip: HTMLDivElement) => {
-      clearHideTimeout()
-      if (activeTooltip && activeTooltip !== tooltip) {
-        activeTooltip.classList.add('hidden')
+    /* Mount map root node to DOM: triggers <gmp-map> rendering here, base map drawn by Google Maps API */
+    container.appendChild(gmpMap)
+    gmpMapRef.current = gmpMap
+
+    /** Streamline Google default controls: via SDK exposed innerMap.setOptions keep only zoom, disable others.
+       Poll until innerMap becomes available rather than giving up after a fixed number of retries: on slow
+       networks/devices the web component can take longer than ~1s to expose innerMap, and abandoning the wait
+       would leave mapGeneration never incremented, so the recenter / station-marker / journey-route effects
+       (which key off it) would never run and the user would be stuck on the default view. */
+    let polling = true
+    let pendingTimer: ReturnType<typeof setTimeout> | null = null
+    const applyMapOptions = () => {
+      const mapEl = gmpMapRef.current
+      if (!polling) return
+      if (mapEl?.innerMap) {
+        mapEl.innerMap.setOptions({
+          disableDefaultUI: true,
+          zoomControl: true,
+          mapTypeControl: false,
+          streetViewControl: false,
+          fullscreenControl: false,
+        })
+        // Signal that the map instance is ready (innerMap exists), so
+        // map-drawing effects (station markers, journey routes) re-run on it.
+        setMapGeneration((g) => g + 1)
+        return
       }
-      if (activeMarker && activeMarker !== marker) {
-        setMarkerZIndex(activeMarker, MARKER_BASE_Z_INDEX)
-      }
-      tooltip.classList.remove('hidden')
-      setMarkerZIndex(marker, MARKER_ACTIVE_Z_INDEX)
-      activeTooltip = tooltip
-      activeMarker = marker
+      pendingTimer = setTimeout(applyMapOptions, 50)
     }
+    setTimeout(applyMapOptions, 0)
 
-    /** Delayed hide, allows mouse to move from dot to tooltip without flickering */
-    const hideTooltip = (marker: HTMLElement, tooltip: HTMLDivElement) => {
-      clearHideTimeout()
-      hideTimeoutId = setTimeout(() => {
-        tooltip.classList.add('hidden')
-        setMarkerZIndex(marker, MARKER_BASE_Z_INDEX)
-        if (activeTooltip === tooltip) activeTooltip = null
-        if (activeMarker === marker) activeMarker = null
-        hideTimeoutId = null
-      }, 150)
+    return () => {
+      polling = false
+      if (pendingTimer) clearTimeout(pendingTimer)
+      gmpMapRef.current = null
+      container.innerHTML = ''
     }
+  }, [scriptLoaded, hideTooltipNow])
 
-    /** Hide immediately (click toggle / click map blank area) */
-    const hideTooltipNow = (marker: HTMLElement, tooltip: HTMLDivElement) => {
-      clearHideTimeout()
-      tooltip.classList.add('hidden')
-      setMarkerZIndex(marker, MARKER_BASE_Z_INDEX)
-      if (activeTooltip === tooltip) activeTooltip = null
-      if (activeMarker === marker) activeMarker = null
-    }
+  // ---- Recenters & user marker (runs when the resolved position changes) --------
+  // Recenter uses innerMap.setCenter/setZoom so it never rebuilds the element and
+  // never interrupts a drag. This also applies the initial center once the user's
+  // location resolves and the map instance is ready (creation always starts from
+  // DEFAULT_CENTER; the real view is set here via mapGeneration readiness).
+  useEffect(() => {
+    if (!userPosition) return
+    const mapEl = gmpMapRef.current
+    const inner = mapEl?.innerMap
+    if (!inner) return
 
-    /* User location marker: <gmp-advanced-marker> also provided by Google Maps SDK, used to display points on map */
-    if (userPosition) {
-      const userMarker = document.createElement('gmp-advanced-marker')
-      userMarker.setAttribute('position', center)
+    // Add or move the user-location marker without touching station markers.
+    let userMarker = userMarkerRef.current
+    if (!userMarker || !mapEl!.contains(userMarker)) {
+      userMarker = document.createElement('gmp-advanced-marker')
       userMarker.setAttribute('title', 'My Location')
-      gmpMap.appendChild(userMarker)
+      userMarker.setAttribute(
+        'position',
+        `${userPosition.lat},${userPosition.lng}`
+      )
+      mapEl!.insertBefore(userMarker, mapEl!.firstChild)
+      userMarkerRef.current = userMarker
+    } else {
+      userMarker.setAttribute(
+        'position',
+        `${userPosition.lat},${userPosition.lng}`
+      )
+    }
+
+    inner.setCenter({ lat: userPosition.lat, lng: userPosition.lng })
+    inner.setZoom(USER_ZOOM)
+  }, [userPosition, mapGeneration])
+
+  // ---- Station markers (redrawn when stations/status/map change) ----------------
+  // Markers are removed and re-added to reflect status colors, but the map element
+  // itself is untouched, so an in-progress drag is never interrupted.
+  useEffect(() => {
+    const mapEl = gmpMapRef.current
+    if (!mapEl) return
+
+    // Clear previous station markers.
+    stationMarkersRef.current.forEach((m) => m.remove())
+    stationMarkersRef.current = []
+
+    if (activeTooltipRef.current && activeMarkerRef.current) {
+      hideTooltipNow(activeMarkerRef.current, activeTooltipRef.current)
     }
 
     /* Station markers: one gmp-advanced-marker per station, with custom content (icon + tooltip) */
@@ -440,18 +546,18 @@ export default function Maps() {
       address.title = s.address
       address.textContent = s.address
 
-      
+
 
       const bikesLine = document.createElement('div')
       bikesLine.className = 'mt-2 text-sm font-semibold text-[#a3c661]'
-      bikesLine.textContent = currentStatus 
-        ? `🚲 Bikes: ${currentStatus.available_bikes}` 
+      bikesLine.textContent = currentStatus
+        ? `🚲 Bikes: ${currentStatus.available_bikes}`
         : '🚲 Bikes: --'
 
       const standsLine = document.createElement('div')
       standsLine.className = 'mt-1 text-sm font-semibold text-[#f1c25f]'
-      standsLine.textContent = currentStatus 
-        ? `🅿️ Stands: ${currentStatus.available_bike_stands}` 
+      standsLine.textContent = currentStatus
+        ? `🅿️ Stands: ${currentStatus.available_bike_stands}`
         : '🅿️ Stands: --'
 
       const arrow = document.createElement('div')
@@ -478,78 +584,18 @@ export default function Maps() {
       markerContent.addEventListener('click', (event) => {
         event.stopPropagation()
         toggleStationInfo()
-
-        setDetailLoading(true)
-        setStationDetail(null)
-
-        setTimeRange('history')
-        setHistoryRange('4h')
-        setPredictionData([])
-        setChartLoading(false)
-
-        setSelectedStation(s) // Update selected station
+        selectStation(s)
       })
       marker.addEventListener('gmp-click', () => {
         toggleStationInfo()
-
-        setDetailLoading(true)
-        setStationDetail(null)
-
-        setTimeRange('history')
-        setHistoryRange('4h')
-        setPredictionData([])
-        setChartLoading(false)
-
-        setSelectedStation(s)
+        selectStation(s)
       })
 
       marker.appendChild(markerContent)
-      gmpMap.appendChild(marker)
+      mapEl.appendChild(marker)
+      stationMarkersRef.current.push(marker)
     })
-
-    gmpMap.addEventListener('click', () => {
-      if (activeTooltip && activeMarker) {
-        hideTooltipNow(activeMarker, activeTooltip)
-      }
-    })
-
-    /* Mount map root node to DOM: triggers <gmp-map> rendering here, base map drawn by Google Maps API */
-    container.appendChild(gmpMap)
-
-    /** Streamline Google default controls: via SDK exposed innerMap.setOptions keep only zoom, disable others */
-    const mapEl = gmpMap as HTMLElement & {
-      innerMap?: {
-        setOptions: (opts: {
-          disableDefaultUI?: boolean
-          zoomControl?: boolean
-          mapTypeControl?: boolean
-          streetViewControl?: boolean
-          fullscreenControl?: boolean
-        }) => void
-      }
-    }
-    let retries = 0
-    const applyMapOptions = () => {
-      if (mapEl.innerMap) {
-        mapEl.innerMap.setOptions({
-          disableDefaultUI: true,
-          zoomControl: true,
-          mapTypeControl: false,
-          streetViewControl: false,
-          fullscreenControl: false,
-        })
-        // Signal that the new map instance is ready (innerMap exists), so
-        // map-drawing effects (e.g. journey routes) re-run on this map.
-        setMapGeneration((g) => g + 1)
-        return
-      }
-      if (retries < 20) {
-        retries += 1
-        setTimeout(applyMapOptions, 50)
-      }
-    }
-    setTimeout(applyMapOptions, 0)
-  }, [scriptLoaded, userPosition, stations, stationsStatus])
+  }, [stations, stationsStatus, mapGeneration, showTooltip, hideTooltip, hideTooltipNow, selectStation, setMarkerZIndex])
 
 
   // When clicking station, fetch "complete" parking data and history from Flask backend
@@ -596,8 +642,8 @@ export default function Maps() {
 
   // Listen for journeyResult changes, draw route
   useEffect(() => {
-    if (!scriptLoaded || !mapContainerRef.current) return
-    const mapEl = mapContainerRef.current.querySelector('gmp-map') as HTMLElement & { innerMap?: google.maps.Map }
+    if (!scriptLoaded) return
+    const mapEl = gmpMapRef.current
     if (!mapEl || !mapEl.innerMap || typeof google === 'undefined') return
 
     // Clear old routes before each draw
