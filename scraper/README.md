@@ -162,6 +162,8 @@ JCDECAUX_CONTRACT=dublin
 SCRAPE_INTERVAL_SECONDS=300
 RETRY_INTERVAL_SECONDS=60
 WEATHER_SCRAPE_INTERVAL_SECONDS=3600
+AVAILABILITY_RETENTION_DAYS=30
+DELETE_OLD_AVAILABILITY_INTERVAL_SECONDS=3600
 OUTPUT_JSON=stations.json
 JCDECAUX_BASE_URL=https://api.jcdecaux.com/vls/v1/stations
 OPENWEATHER_API_KEY=your_openweather_api_key
@@ -180,6 +182,8 @@ WEATHER_CITY=Dublin,IE
 | `SCRAPE_INTERVAL_SECONDS` | | `300` | Interval between bike station scrapes (seconds) |
 | `RETRY_INTERVAL_SECONDS` | | `60` | Wait time before retrying after a failure (seconds) |
 | `WEATHER_SCRAPE_INTERVAL_SECONDS` | | `3600` | Interval between weather scrapes (seconds) |
+| `AVAILABILITY_RETENTION_DAYS` | | `30` | Purge availability rows older than this many days |
+| `DELETE_OLD_AVAILABILITY_INTERVAL_SECONDS` | | `3600` | Interval between retention purges (seconds) |
 | `WEATHER_CITY` | | `Dublin,IE` | Target city for weather forecasts |
 | `OUTPUT_JSON` | | `stations.json` | Output file for `fetch_stations.py` |
 
@@ -215,6 +219,8 @@ Two concurrent threads run inside `main_scraper.py`:
 - **Station thread**: Polls JCDecaux API every `SCRAPE_INTERVAL_SECONDS` (default 5 min)
 - **Weather thread**: Polls OpenWeatherMap every `WEATHER_SCRAPE_INTERVAL_SECONDS` (default 1 hour)
 
+A third **retention thread** purges old availability rows every `DELETE_OLD_AVAILABILITY_INTERVAL_SECONDS` (default 1 hour), and a purge also runs once at startup. Rows older than `AVAILABILITY_RETENTION_DAYS` (default 30 days) are deleted in small batches to keep the database small (Supabase free tier is capped at 0.5 GB).
+
 Both threads recover automatically from errors. The station thread retries after `RETRY_INTERVAL_SECONDS` (default 60s). The weather thread handles API errors internally and retries on the next hourly cycle.
 
 ---
@@ -222,9 +228,10 @@ Both threads recover automatically from errors. The station thread retries after
 ## 📁 Project Structure
 ```
 scraper/
-├── main_scraper.py       # Entry point — runs both scrapers in concurrent threads
+├── main_scraper.py       # Entry point — runs scrapers + retention in concurrent threads
 ├── fetch_stations.py     # JCDecaux API client — fetches & saves station JSON
 ├── fetch_weather.py      # OpenWeatherMap client — fetches & upserts weather forecasts
+├── retention.py          # Availability retention policy — purges old rows
 ├── config.py             # Environment-based configuration (no Flask dependency)
 ├── database.py           # SQLAlchemy engine & session factory
 ├── models.py             # ORM models: Station, Availability
