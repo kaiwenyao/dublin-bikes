@@ -48,7 +48,7 @@ def delete_old_availability(retention_days: int | None = None) -> int:
         while True:
             batch_ids = session.scalars(
                 select(Availability.id)
-                .where(Availability.timestamp < cutoff)
+                .where(Availability.requested_at < cutoff)
                 .limit(_DELETE_BATCH_SIZE)
             ).all()
             if not batch_ids:
