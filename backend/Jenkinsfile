@@ -45,8 +45,13 @@ spec:
         - name: TESTCONTAINERS_RYUK_DISABLED
           value: "true"
       volumeMounts:
-        - mountPath: /home/jenkins/.m2
-          name: maven-cache
+        # Maven 本地仓库（依赖缓存），挂集群共享的 NFS PVC，任何节点上的构建
+        # 都能复用同一份缓存，详见下方 volumes。
+        # 注意：镜像默认用户是 root，家目录是 /root，所以仓库挂在 /root/.m2/repository
+        # （而非 /home/jenkins/.m2 —— 后者既非该镜像的家目录，先前底层还是
+        # emptyDir，等于从不跨构建缓存）。
+        - mountPath: /root/.m2/repository
+          name: maven-repo
         # 宿主节点的 Docker socket：集成测试阶段 Testcontainers 需要它创建 PostgreSQL 容器。
         - mountPath: /var/run/docker.sock
           name: docker-sock
@@ -62,8 +67,14 @@ spec:
         - mountPath: /var/run/docker.sock
           name: docker-sock
   volumes:
-    - name: maven-cache
-      emptyDir: {}
+    # Maven 本地仓库，使用集群里现成的 NFS PVC（jenkins-maven-cache，RWX）。
+    # 数据实际存在共享存储上：无论构建 Pod 被调度到哪个节点，挂上的都是同一份
+    # 依赖缓存，不再像 emptyDir 那样随 Pod 重建而丢失、每次构建都全量重下。
+    # 并发构建共享同一份仓库，Maven 对并发写本地仓库无锁保护，理论上有互相
+    # 干扰的可能（与 hostPath 方案同样的风险），可接受。
+    - name: maven-repo
+      persistentVolumeClaim:
+        claimName: jenkins-maven-cache
     - name: docker-sock
       hostPath:
         path: /var/run/docker.sock
