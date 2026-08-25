@@ -34,11 +34,15 @@ class WeatherRestIntegrationTest extends IntegrationTestBase {
 
     @Test
     void getWeather_returnsCurrentAndHourlyFromDatabase() {
-        // Anchor forecasts at a time safely inside the current hour to avoid
-        // hour-boundary flakes (both test and service truncate to hour start,
-        // so any minute inside the hour is stable).
+        // Anchor forecasts far in the future (one year ahead) so they are ALWAYS
+        // >= the service's `nowHour`, regardless of which UTC hour the GET runs
+        // in. The service query is `forecast_time >= nowHour ORDER BY forecast_time
+        // ASC`, so `current` is the smallest forecast_time and `hourly` is the
+        // rest — both fully deterministic this way, no hour-boundary flake and no
+        // need to widen the assertions. (Past/future has no special meaning to the
+        // endpoint; it only filters by `>= nowHour`.)
         LocalDateTime baseHour =
-                LocalDateTime.now(ZoneOffset.UTC).truncatedTo(ChronoUnit.HOURS);
+                LocalDateTime.now(ZoneOffset.UTC).plusYears(1).truncatedTo(ChronoUnit.HOURS);
 
         persistForecast(baseHour, 15.5f);
         persistForecast(baseHour.plusHours(1), 16.0f);
@@ -55,11 +59,13 @@ class WeatherRestIntegrationTest extends IntegrationTestBase {
         assertThat(data).isNotNull();
         Map<?, ?> current = (Map<?, ?>) data.get("current");
         assertThat(current).isNotNull();
+        // Smallest forecast_time in the result set (15.5 at baseHour).
         assertThat(current.get("temp")).isEqualTo(15.5);
 
         java.util.List<?> hourly = (java.util.List<?>) data.get("hourly");
         assertThat(hourly).isNotNull();
-        assertThat(hourly).hasSizeGreaterThanOrEqualTo(1);
+        // Remaining two rows (16.0, 16.5); tightened back from >= 1.
+        assertThat(hourly).hasSize(2);
     }
 
     @Test
