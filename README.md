@@ -131,12 +131,30 @@ curl http://localhost:8080/actuator/health     # {"status":"UP"}
 
 ## 🧬 Testing
 
+### Unit tests
+
 ```bash
-cd backend             && ./mvnw test                    # Spring Boot (JUnit 5)
-cd chat-service        && pytest                          # FastAPI chat service
-cd prediction-service  && pytest                          # FastAPI prediction service
-cd frontend            && npm test                        # frontend unit tests
+cd backend             && mvn test                              # Spring Boot (JUnit 5)
+cd chat-service        && pytest                                # FastAPI chat service
+cd prediction-service  && pytest                                # FastAPI prediction service
+cd frontend            && npm test                              # frontend unit tests
 ```
+
+### Integration tests
+
+The backend has REST API integration tests that boot the full Spring context against a real
+PostgreSQL container managed by [Testcontainers](https://java.testcontainers.org/):
+
+```bash
+cd backend
+mvn test -Dspring.profiles.active=it \
+    -Dtest='dev.kaiwen.bikes.it.**' \
+    -Dsurefire.failIfNoSpecifiedTests=false
+```
+
+Requires Docker on the host. The `it` profile (`application-it.yaml`) uses Flyway to create the
+production schema in the ephemeral container, then exercises the station, weather, and
+user-auth REST endpoints end-to-end via real HTTP calls.
 
 ## 🤝 Contributing
 

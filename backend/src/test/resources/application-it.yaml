@@ -1,0 +1,86 @@
+# =============================================================================
+# 集成测试 profile（it）：基于 Testcontainers 的真实 PostgreSQL 容器
+# =============================================================================
+# 运行方式：
+#   cd backend
+#   mvn test -Dspring.profiles.active=it -Dtest='dev.kaiwen.bikes.it.**' \
+#       -Dsurefire.failIfNoSpecifiedTests=false
+#
+# 说明：
+# - 数据源地址由 IntegrationTestBase 的 @DynamicPropertySource 统一注入：
+#   spring.datasource.*（PostgreSQL 容器）。此处不配置 spring.datasource.*，
+#   避免占位值覆盖容器地址导致连接被拒。
+# - Flyway 在容器启动后自动执行建表迁移（V1~V4），保证表结构与生产一致。
+# - Hibernate 运行在 ddl-auto: validate 模式（与生产一致），验证实体与
+#   Flyway schema 的一致性。
+# - JWT 密钥用静态值（≥32 字节，满足 HS256）。
+# - 外部服务（chat-service、prediction-service、Google Maps）用假值占位，
+#   集成测试不调用这些真实服务。
+# =============================================================================
+
+spring:
+  # 数据源地址由 IntegrationTestBase 的 @DynamicPropertySource 注入覆盖
+  datasource:
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc.time_zone: UTC
+
+  flyway:
+    enabled: true
+    # IT 专用迁移目录：与生产 schema 完全一致，但 V4 将 CONCURRENTLY 替换为
+    # 普通 CREATE INDEX（详见 db/migration_it/V4 说明）。
+    locations: classpath:db/migration_it
+
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    default-property-inclusion: ALWAYS
+    serialization:
+      write-dates-as-timestamps: false
+
+  mail:
+    host: ""
+
+  thymeleaf:
+    check-template-location: false
+
+app:
+  chat-service:
+    base-url: http://localhost:8002
+    connect-timeout-ms: 1000
+    read-timeout-ms: 5000
+    stream-timeout-ms: 10000
+    title-timeout-ms: 3000
+
+  prediction-service:
+    base-url: http://localhost:8001
+    connect-timeout-ms: 1000
+    read-timeout-ms: 5000
+
+  jwt:
+    # 静态测试密钥（仅集成测试用，长度满足 HS256 ≥ 32 字节）
+    access-secret: it-access-secret-key-at-least-32-bytes!!
+    refresh-secret: it-refresh-secret-key-at-least-32-bytes!!
+    access-expires-seconds: 900
+    refresh-expires-seconds: 604800
+
+  verification:
+    code-expire-seconds: 300
+    resend-cooldown-seconds: 60
+
+  mail:
+    from: it-test@example.com
+    from-name: Dublin Bikes IT
+    frontend-base-url: http://localhost:5173
+
+  google-maps:
+    api-key: it-test-google-maps-key
+    connect-timeout-ms: 1000
+    read-timeout-ms: 5000
+    max-retries: 0
