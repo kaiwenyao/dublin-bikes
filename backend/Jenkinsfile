@@ -3,6 +3,18 @@ pipeline {
         kubernetes {
             cloud 'kubernetes'
             defaultContainer 'maven'
+            // -----------------------------------------------------------------------------
+            // Pod 定义说明：两个业务容器（maven + docker），Jenkins K8s 插件自动注入 jnlp。
+            //
+            // maven 容器：编译、单元测试、集成测试、打包（内含 JDK 21 + Maven）。
+            //   - 挂载 Docker socket：集成测试阶段 Testcontainers 通过它创建 PostgreSQL 容器。
+            //   - TESTCONTAINERS_HOST_OVERRIDE：告诉 Testcontainers 用宿主节点 IP 回连它起的容器
+            //     （而非 localhost），因为 Pod 有独立网络命名空间。
+            //   - TESTCONTAINERS_RYUK_DISABLED：关闭 Ryuk 看门狗容器（受限集群拉不起 privileged），
+            //     改由 JVM shutdown hook 清理；被强杀时容器残留由 post { always } 兜底删除。
+            //
+            // docker 容器：构建并推送镜像（内含 docker CLI，通过 socket 指挥宿主节点守护进程）。
+            // -----------------------------------------------------------------------------
             yaml '''
 apiVersion: v1
 kind: Pod
@@ -19,9 +31,30 @@ spec:
         - "9999999"
       tty: true
       workingDir: /home/jenkins/agent
+      env:
+        # 【调整一】告诉 Testcontainers 该用哪个地址连它起的容器。
+        # Testcontainers 默认假定容器映射到 localhost，但守护进程在宿主节点上，
+        # Pod 有独立的网络命名空间，localhost 是 Pod 自己而非节点。
+        # 用 Downward API 取所在节点的 IP，让 Testcontainers 改用该 IP 回连。
+        - name: TESTCONTAINERS_HOST_OVERRIDE
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        # 【调整二】关闭 Ryuk。Ryuk 需要 --privileged，受限集群通常拉不起来。
+        # 关掉后回退到 JVM shutdown hook 清理；被强杀时由 post { always } 兜底。
+        - name: TESTCONTAINERS_RYUK_DISABLED
+          value: "true"
       volumeMounts:
-        - mountPath: /home/jenkins/.m2
-          name: maven-cache
+        # Maven 本地仓库（依赖缓存），挂集群共享的 NFS PVC，任何节点上的构建
+        # 都能复用同一份缓存，详见下方 volumes。
+        # 注意：镜像默认用户是 root，家目录是 /root，所以仓库挂在 /root/.m2/repository
+        # （而非 /home/jenkins/.m2 —— 后者既非该镜像的家目录，先前底层还是
+        # emptyDir，等于从不跨构建缓存）。
+        - mountPath: /root/.m2/repository
+          name: maven-repo
+        # 宿主节点的 Docker socket：集成测试阶段 Testcontainers 需要它创建 PostgreSQL 容器。
+        - mountPath: /var/run/docker.sock
+          name: docker-sock
     - name: docker
       image: docker:27-cli
       command:
@@ -34,8 +67,14 @@ spec:
         - mountPath: /var/run/docker.sock
           name: docker-sock
   volumes:
-    - name: maven-cache
-      emptyDir: {}
+    # Maven 本地仓库，使用集群里现成的 NFS PVC（jenkins-maven-cache，RWX）。
+    # 数据实际存在共享存储上：无论构建 Pod 被调度到哪个节点，挂上的都是同一份
+    # 依赖缓存，不再像 emptyDir 那样随 Pod 重建而丢失、每次构建都全量重下。
+    # 并发构建共享同一份仓库，Maven 对并发写本地仓库无锁保护，理论上有互相
+    # 干扰的可能（与 hostPath 方案同样的风险），可接受。
+    - name: maven-repo
+      persistentVolumeClaim:
+        claimName: jenkins-maven-cache
     - name: docker-sock
       hostPath:
         path: /var/run/docker.sock
@@ -58,6 +97,11 @@ spec:
         DOCKER_CREDENTIALS_ID = 'docker-hub-credentials'
         SERVER_HOST_CREDENTIALS_ID = 'hel-host'
         CONFIG_FILE_CREDENTIALS_ID = 'dublin-bikes-backend-prod-yaml'
+        // 本次构建的唯一标识，用作 Testcontainers 容器的 Docker 标签。
+        // 集成测试给它起的每个容器都打上这个标签，post { always } 据此精确清理，
+        // 不会误伤同一节点上并发构建正在使用的容器。
+        // BUILD_TAG 形如 jenkins-<任务名>-<构建号>，替换非法字符以匹配标签格式。
+        IT_BUILD_TAG = "${env.BUILD_TAG}".replaceAll('[^A-Za-z0-9_.-]', '-')
     }
 
     stages {
@@ -89,12 +133,15 @@ spec:
                     }
                 }
 
-                stage('3. Run Tests') {
+                stage('3. Unit Tests') {
                     steps {
                         container('maven') {
                             dir('backend') {
                                 sh '''
-                                mvn -B -ntp test
+                                echo "Running unit tests (slice tests, no external services)"
+                                mvn -B -ntp test \
+                                    -Dtest='!dev.kaiwen.bikes.it.**' \
+                                    -Dsurefire.failIfNoSpecifiedTests=false
                                 '''
                             }
                         }
@@ -106,7 +153,31 @@ spec:
                     }
                 }
 
-                stage('4. Build & Push Docker Image') {
+                stage('4. Integration Tests') {
+                    steps {
+                        container('maven') {
+                            dir('backend') {
+                                sh '''
+                                echo "Running REST API integration tests (Testcontainers: PostgreSQL)"
+                                # IntegrationTestBase 读取该变量，给它创建的容器打上本次构建的标签，
+                                # 供 post 阶段做兜底清理。
+                                export DUBLIN_BIKES_IT_BUILD_TAG="$IT_BUILD_TAG"
+                                mvn -B -ntp test \
+                                    -Dspring.profiles.active=it \
+                                    -Dtest='dev.kaiwen.bikes.it.**' \
+                                    -Dsurefire.failIfNoSpecifiedTests=false
+                                '''
+                            }
+                        }
+                    }
+                    post {
+                        always {
+                            junit testResults: 'backend/target/surefire-reports/*.xml', allowEmptyResults: false
+                        }
+                    }
+                }
+
+                stage('5. Build & Push Docker Image') {
                     when {
                         not { changeRequest() }
                     }
@@ -144,7 +215,7 @@ spec:
                     }
                 }
 
-                stage('5. Deploy to Server') {
+                stage('6. Deploy to Server') {
                     when {
                         expression {
                             def rawBranch = env.BRANCH_NAME ?: env.GIT_BRANCH ?: ''
@@ -221,6 +292,28 @@ REMOTE
 
     post {
         always {
+            // 兜底删除集成测试残留的 Testcontainers 容器。
+            //
+            // 正常路径下 Testcontainers 会在测试进程退出时自行清理（Ryuk 已禁用）；
+            // 但构建被取消或进程被强杀时来不及清理，容器会滞留在节点上。
+            // 按本次构建的专属标签精确删除，不会影响同一节点上其他正在进行的构建。
+            script {
+                try {
+                    container('docker') {
+                        sh '''
+                            echo "Cleaning up Testcontainers containers for this build (label: $IT_BUILD_TAG)"
+                            stray=$(docker ps -aq --filter "label=dev.kaiwen.it.build=$IT_BUILD_TAG" || true)
+                            if [ -n "$stray" ]; then
+                                docker rm -f $stray || true
+                            else
+                                echo "No stray containers found"
+                            fi
+                        '''
+                    }
+                } catch (err) {
+                    echo "Testcontainers cleanup skipped: ${err}"
+                }
+            }
             cleanWs()
         }
     }
