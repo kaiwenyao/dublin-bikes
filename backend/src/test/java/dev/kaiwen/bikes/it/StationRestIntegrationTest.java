@@ -163,7 +163,8 @@ class StationRestIntegrationTest extends IntegrationTestBase {
         availability.setStatus("OPEN");
         availability.setLastUpdate(1L);
         availability.setTimestamp(timestamp);
-        availability.setRequestedAt(timestamp.plusSeconds(5));
+        // requested_at is the scrape time — always <= timestamp (the JCDecaux data time)
+        availability.setRequestedAt(timestamp);
         availabilityRepository.saveAndFlush(availability);
     }
 }

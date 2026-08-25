@@ -1,7 +1,6 @@
 package dev.kaiwen.bikes.it;
 
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -72,8 +71,6 @@ public abstract class IntegrationTestBase {
         registry.add("spring.datasource.password", POSTGRES::getPassword);
         registry.add("spring.datasource.driver-class-name", () -> "org.postgresql.Driver");
     }
-
-    @LocalServerPort protected int port;
 
     @org.springframework.beans.factory.annotation.Autowired
     protected org.springframework.boot.test.web.client.TestRestTemplate restTemplate;
