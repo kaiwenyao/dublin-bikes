@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.kaiwen.bikes.client.ChatServiceClient;
 import dev.kaiwen.bikes.config.ChatServiceProperties;
 import dev.kaiwen.bikes.dto.ApiCodes;
+import dev.kaiwen.bikes.dto.request.ChatRequestDTO;
 import dev.kaiwen.bikes.dto.response.ChatMessageVO;
 import dev.kaiwen.bikes.dto.response.ChatSessionVO;
 import dev.kaiwen.bikes.exception.AuthException;
@@ -316,6 +317,227 @@ class ChatServiceTest {
         }
     }
 
+    @Test
+    void chatStream_withLocation_includesLocationInRequestBody() throws Exception {
+        AtomicReference<String> capturedBody = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext(
+                "/chat/stream",
+                exchange -> {
+                    capturedBody.set(
+                            new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                    byte[] body = "data: ok\n\n".getBytes(StandardCharsets.UTF_8);
+                    exchange.sendResponseHeaders(200, body.length);
+                    try (OutputStream out = exchange.getResponseBody()) {
+                        out.write(body);
+                    }
+                    exchange.close();
+                });
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            setField(
+                    "properties",
+                    new ChatServiceProperties(
+                            "http://127.0.0.1:" + port, 1000, 5000, 10000, 3000));
+
+            TrackingSseEmitter emitter = new TrackingSseEmitter(5000L);
+            ChatRequestDTO.LocationDTO location =
+                    new ChatRequestDTO.LocationDTO(53.34, -6.26, 12.5);
+
+            chatService.chatStream("hello", "default", location, emitter);
+
+            assertThat(emitter.awaitDone(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(capturedBody.get()).contains("\"location\"").contains("53.34");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void chatStream_serializationFailure_completesWithError() throws Exception {
+        ObjectMapper failingMapper = org.mockito.Mockito.mock(ObjectMapper.class);
+        when(failingMapper.writeValueAsString(any()))
+                .thenThrow(new com.fasterxml.jackson.core.JsonProcessingException("boom") {});
+        setField("objectMapper", failingMapper);
+
+        TrackingSseEmitter emitter = new TrackingSseEmitter(5000L);
+
+        chatService.chatStream("hello", "default", null, emitter);
+
+        assertThat(emitter.awaitDone(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(emitter.error.get())
+                .isInstanceOf(BusinessException.class)
+                .satisfies(
+                        ex ->
+                                assertThat(((BusinessException) ex).getMessage())
+                                        .isEqualTo("failed to serialize request"));
+    }
+
+    @Test
+    void chatStream_upstream4xx_mapsToSameStatus() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext(
+                "/chat/stream",
+                exchange -> {
+                    byte[] body = "bad request".getBytes(StandardCharsets.UTF_8);
+                    exchange.sendResponseHeaders(400, body.length);
+                    exchange.getResponseBody().write(body);
+                    exchange.close();
+                });
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            setField(
+                    "properties",
+                    new ChatServiceProperties(
+                            "http://127.0.0.1:" + port, 1000, 5000, 10000, 3000));
+
+            TrackingSseEmitter emitter = new TrackingSseEmitter(5000L);
+
+            chatService.chatStream("hello", "default", null, emitter);
+
+            assertThat(emitter.awaitDone(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(emitter.error.get())
+                    .isInstanceOf(BusinessException.class)
+                    .satisfies(
+                            ex -> assertThat(((BusinessException) ex).getStatus()).isEqualTo(400));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void chatStream_upstream3xx_mapsTo500() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext(
+                "/chat/stream",
+                exchange -> {
+                    byte[] body = "redirect".getBytes(StandardCharsets.UTF_8);
+                    exchange.sendResponseHeaders(302, body.length);
+                    exchange.getResponseBody().write(body);
+                    exchange.close();
+                });
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            setField(
+                    "properties",
+                    new ChatServiceProperties(
+                            "http://127.0.0.1:" + port, 1000, 5000, 10000, 3000));
+
+            TrackingSseEmitter emitter = new TrackingSseEmitter(5000L);
+
+            chatService.chatStream("hello", "default", null, emitter);
+
+            assertThat(emitter.awaitDone(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(emitter.error.get())
+                    .isInstanceOf(BusinessException.class)
+                    .satisfies(
+                            ex -> assertThat(((BusinessException) ex).getStatus()).isEqualTo(500));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void chatStream_skipsNonDataAndEmptyDataLines() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext(
+                "/chat/stream",
+                exchange -> {
+                    // 非 data 行、裸 "data:" 行都应被跳过，只有最后一行产生事件
+                    String sse = "event: keepalive\n\ndata:\n\ndata: payload\n\n";
+                    byte[] body = sse.getBytes(StandardCharsets.UTF_8);
+                    exchange.sendResponseHeaders(200, body.length);
+                    try (OutputStream out = exchange.getResponseBody()) {
+                        out.write(body);
+                    }
+                    exchange.close();
+                });
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            setField(
+                    "properties",
+                    new ChatServiceProperties(
+                            "http://127.0.0.1:" + port, 1000, 5000, 10000, 3000));
+
+            TrackingSseEmitter emitter = new TrackingSseEmitter(5000L);
+
+            chatService.chatStream("hello", "default", null, emitter);
+
+            assertThat(emitter.awaitDone(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(emitter.error.get()).isNull();
+            assertThat(emitter.sentCount.get()).isEqualTo(1);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void chatStream_connectionRefused_completesWithError() throws Exception {
+        // 找一个未被监听的端口：先开后关，随后连接必然被拒
+        int closedPort;
+        try (java.net.ServerSocket socket = new java.net.ServerSocket(0)) {
+            closedPort = socket.getLocalPort();
+        }
+        setField(
+                "properties",
+                new ChatServiceProperties(
+                        "http://127.0.0.1:" + closedPort, 1000, 5000, 10000, 3000));
+
+        TrackingSseEmitter emitter = new TrackingSseEmitter(5000L);
+
+        chatService.chatStream("hello", "default", null, emitter);
+
+        assertThat(emitter.awaitDone(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(emitter.error.get()).isNotNull();
+    }
+
+    @Test
+    void ensureSession_raceOnInsert_recoversExistingRow() {
+        when(chatSessionRepository.findById("user_1_chat_default"))
+                .thenReturn(Optional.empty())
+                .thenReturn(Optional.of(session("user_1_chat_default", 1)));
+        when(chatSessionRepository.saveAndFlush(any(ChatSession.class)))
+                .thenThrow(
+                        new org.springframework.dao.DataIntegrityViolationException(
+                                "duplicate key"));
+
+        ChatSession result = chatService.ensureSession("user_1_chat_default", 1);
+
+        assertThat(result.getId()).isEqualTo("user_1_chat_default");
+    }
+
+    @Test
+    void ensureSession_raceOnInsertAndRowMissing_throws500() {
+        when(chatSessionRepository.findById("user_1_chat_default")).thenReturn(Optional.empty());
+        when(chatSessionRepository.saveAndFlush(any(ChatSession.class)))
+                .thenThrow(
+                        new org.springframework.dao.DataIntegrityViolationException(
+                                "duplicate key"));
+
+        assertThatThrownBy(() -> chatService.ensureSession("user_1_chat_default", 1))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(
+                        ex -> assertThat(((BusinessException) ex).getStatus()).isEqualTo(500));
+    }
+
+    @Test
+    void listSessions_nullTimestamps_mapsToNullStrings() {
+        ChatSession bare = new ChatSession();
+        bare.setId("user_1_chat_bare");
+        bare.setUserId(1);
+        when(chatSessionRepository.findByUserIdOrderByUpdatedAtDesc(1)).thenReturn(List.of(bare));
+
+        List<ChatSessionVO> result = chatService.listSessions();
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).createdAt()).isNull();
+        assertThat(result.get(0).updatedAt()).isNull();
+    }
+
     private static ChatSession session(String id, int userId) {
         ChatSession session = new ChatSession();
         session.setId(id);
@@ -334,9 +556,17 @@ class ChatServiceTest {
     private static final class TrackingSseEmitter extends SseEmitter {
         private final CountDownLatch done = new CountDownLatch(1);
         private final AtomicReference<Throwable> error = new AtomicReference<>();
+        private final java.util.concurrent.atomic.AtomicInteger sentCount =
+                new java.util.concurrent.atomic.AtomicInteger();
 
         TrackingSseEmitter(long timeout) {
             super(timeout);
+        }
+
+        @Override
+        public void send(SseEventBuilder builder) throws java.io.IOException {
+            sentCount.incrementAndGet();
+            super.send(builder);
         }
 
         @Override

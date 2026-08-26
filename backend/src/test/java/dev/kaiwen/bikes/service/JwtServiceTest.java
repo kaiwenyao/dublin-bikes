@@ -77,4 +77,93 @@ class JwtServiceTest {
         assertThatThrownBy(() -> jwtService.parseAccessToken(refresh))
                 .isInstanceOf(AuthException.class);
     }
+
+    @Test
+    void parseAccessToken_rejectsAccessSignedTokenWithRefreshType() {
+        // 用 access 密钥签名但 type 声明为 refresh：签名校验通过，类型校验拒绝
+        String token =
+                io.jsonwebtoken.Jwts.builder()
+                        .subject("1")
+                        .claim("ver", 0)
+                        .claim("type", "refresh")
+                        .issuedAt(new java.util.Date())
+                        .expiration(
+                                java.util.Date.from(
+                                        java.time.Instant.now().plusSeconds(900)))
+                        .signWith(
+                                io.jsonwebtoken.security.Keys.hmacShaKeyFor(
+                                        "test-access-secret-key-at-least-32-bytes!!"
+                                                .getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+                        .compact();
+
+        assertThatThrownBy(() -> jwtService.parseAccessToken(token))
+                .isInstanceOf(AuthException.class);
+    }
+
+    @Test
+    void parseAccessToken_rejectsNonNumericSubject() {
+        String token =
+                io.jsonwebtoken.Jwts.builder()
+                        .subject("not-a-number")
+                        .claim("ver", 0)
+                        .claim("type", "access")
+                        .issuedAt(new java.util.Date())
+                        .expiration(
+                                java.util.Date.from(
+                                        java.time.Instant.now().plusSeconds(900)))
+                        .signWith(
+                                io.jsonwebtoken.security.Keys.hmacShaKeyFor(
+                                        "test-access-secret-key-at-least-32-bytes!!"
+                                                .getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+                        .compact();
+
+        assertThatThrownBy(() -> jwtService.parseAccessToken(token))
+                .isInstanceOf(AuthException.class);
+    }
+
+    @Test
+    void parseAccessToken_rejectsMissingSubject() {
+        String token =
+                io.jsonwebtoken.Jwts.builder()
+                        .claim("ver", 0)
+                        .claim("type", "access")
+                        .issuedAt(new java.util.Date())
+                        .expiration(
+                                java.util.Date.from(
+                                        java.time.Instant.now().plusSeconds(900)))
+                        .signWith(
+                                io.jsonwebtoken.security.Keys.hmacShaKeyFor(
+                                        "test-access-secret-key-at-least-32-bytes!!"
+                                                .getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+                        .compact();
+
+        assertThatThrownBy(() -> jwtService.parseAccessToken(token))
+                .isInstanceOf(AuthException.class);
+    }
+
+    @Test
+    void createTokenPair_blankSecret_throwsIllegalState() {
+        JwtService noSecret =
+                new JwtService(new JwtProperties(" ", " ", 900, 604800));
+        User user = new User();
+        user.setId(1);
+        user.setTokenVersion(0);
+
+        assertThatThrownBy(() -> noSecret.createTokenPair(user))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void parseRefreshToken_roundTrip() {
+        User user = new User();
+        user.setId(7);
+        user.setTokenVersion(3);
+        String refresh = jwtService.createTokenPair(user).refreshToken();
+
+        JwtTokenClaims claims = jwtService.parseRefreshToken(refresh);
+
+        assertThat(claims.userId()).isEqualTo(7);
+        assertThat(claims.tokenVersion()).isEqualTo(3);
+        assertThat(claims.type()).isEqualTo("refresh");
+    }
 }

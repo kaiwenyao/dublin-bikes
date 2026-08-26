@@ -177,6 +177,160 @@ class JourneyServiceTest {
                         });
     }
 
+    @Test
+    void plan_withAddresses_resolvesBothViaGeocode() {
+        Station startStation = station(1, 53.340, -6.260);
+        Station endStation = station(2, 53.345, -6.255);
+
+        when(googleMapsClient.geocode("A St")).thenReturn(new LatLon(53.34, -6.26));
+        when(googleMapsClient.geocode("B St")).thenReturn(new LatLon(53.33, -6.25));
+        when(stationRepository.findAllByOrderByNumberAsc())
+                .thenReturn(List.of(startStation, endStation));
+        when(availabilityRepository.findLatestPerStationSince(any()))
+                .thenReturn(
+                        List.of(availability(startStation, 5, 10), availability(endStation, 2, 8)));
+        when(googleMapsClient.distanceMatrix(anyList(), anyList(), eq("walking")))
+                .thenAnswer(
+                        invocation -> {
+                            List<LatLon> origins = invocation.getArgument(0);
+                            List<LatLon> destinations = invocation.getArgument(1);
+                            if (origins.size() == 1 && destinations.size() == 2) {
+                                return new int[][] {{100, 120}};
+                            }
+                            if (origins.size() == 2 && destinations.size() == 1) {
+                                return new int[][] {{80}, {90}};
+                            }
+                            return new int[0][0];
+                        });
+        when(googleMapsClient.distanceMatrix(anyList(), anyList(), eq("bicycling")))
+                .thenReturn(new int[][] {{300, 100}, {400, 250}});
+
+        JourneyRequestDTO request = new JourneyRequestDTO("A St", "B St", null, null);
+
+        JourneyPlanResponseVO response = journeyService.plan(request);
+
+        assertThat(response.routeInfo().startStation().number()).isEqualTo(1);
+        assertThat(response.routeInfo().endStation().number()).isEqualTo(2);
+        assertThat(response.searchContext().startResolved().lat()).isEqualTo(53.34);
+        assertThat(response.searchContext().endResolved().lon()).isEqualTo(-6.25);
+    }
+
+    @Test
+    void plan_filtersOutClosedStaleAndOrphanAvailability() {
+        Station openStation = station(1, 53.340, -6.260);
+        Station endStation = station(2, 53.345, -6.255);
+        Station closedStation = station(3, 53.350, -6.250);
+        Station staleStation = station(4, 53.351, -6.251);
+        Station emptyStation = station(5, 53.352, -6.252);
+
+        Availability openAvail = availability(openStation, 5, 10);
+        Availability endAvail = availability(endStation, 2, 8);
+        Availability closedAvail = availability(closedStation, 9, 9);
+        closedAvail.setStatus("CLOSED");
+        Availability staleAvail = availability(staleStation, 9, 9);
+        staleAvail.setTimestamp(LocalDateTime.now(ZoneOffset.UTC).minusMinutes(45));
+        // 无车也无桩：起点、终点候选都应把它过滤掉
+        Availability emptyAvail = availability(emptyStation, 0, 0);
+        // 可用性记录指向 station 表里没有的站点编号，应被过滤
+        Availability orphanAvail = new Availability();
+        orphanAvail.setNumber(999);
+        orphanAvail.setAvailableBikes(9);
+        orphanAvail.setAvailableBikeStands(9);
+        orphanAvail.setStatus("OPEN");
+        orphanAvail.setTimestamp(LocalDateTime.now(ZoneOffset.UTC));
+
+        when(stationRepository.findAllByOrderByNumberAsc())
+                .thenReturn(List.of(openStation, endStation, closedStation, staleStation, emptyStation));
+        when(availabilityRepository.findLatestPerStationSince(any()))
+                .thenReturn(
+                        List.of(openAvail, endAvail, closedAvail, staleAvail, emptyAvail, orphanAvail));
+        when(googleMapsClient.distanceMatrix(anyList(), anyList(), eq("walking")))
+                .thenAnswer(
+                        invocation -> {
+                            List<LatLon> origins = invocation.getArgument(0);
+                            List<LatLon> destinations = invocation.getArgument(1);
+                            if (origins.size() == 1 && destinations.size() == 2) {
+                                return new int[][] {{100, 120}};
+                            }
+                            if (origins.size() == 2 && destinations.size() == 1) {
+                                return new int[][] {{80}, {90}};
+                            }
+                            return new int[0][0];
+                        });
+        when(googleMapsClient.distanceMatrix(anyList(), anyList(), eq("bicycling")))
+                .thenReturn(new int[][] {{300, 100}, {400, 250}});
+
+        JourneyRequestDTO request =
+                new JourneyRequestDTO(null, null, new GeoPointDTO(53.34, -6.26), new GeoPointDTO(53.33, -6.25));
+
+        JourneyPlanResponseVO response = journeyService.plan(request);
+
+        assertThat(response.routeInfo().startStation().number()).isEqualTo(1);
+        assertThat(response.routeInfo().endStation().number()).isEqualTo(2);
+    }
+
+    @Test
+    void plan_walkMatrixEmpty_throwsNoRoute() {
+        Station startStation = station(1, 53.340, -6.260);
+        Station endStation = station(2, 53.345, -6.255);
+
+        when(stationRepository.findAllByOrderByNumberAsc())
+                .thenReturn(List.of(startStation, endStation));
+        when(availabilityRepository.findLatestPerStationSince(any()))
+                .thenReturn(
+                        List.of(availability(startStation, 5, 10), availability(endStation, 2, 8)));
+        // Google 步行矩阵整体不可用 → rankByWalking 返回空候选 → noRoute
+        when(googleMapsClient.distanceMatrix(anyList(), anyList(), eq("walking")))
+                .thenReturn(new int[0][0]);
+
+        JourneyRequestDTO request =
+                new JourneyRequestDTO(null, null, new GeoPointDTO(53.34, -6.26), new GeoPointDTO(53.33, -6.25));
+
+        assertThatThrownBy(() -> journeyService.plan(request))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(
+                        ex ->
+                                assertThat(((BusinessException) ex).getCode())
+                                        .isEqualTo(ApiCodes.NO_AVAILABLE_ROUTE));
+    }
+
+    @Test
+    void plan_walkFromEndMatrixMissingRows_treatedAsUnreachable() {
+        Station startStation = station(1, 53.340, -6.260);
+        Station endStation = station(2, 53.345, -6.255);
+
+        when(stationRepository.findAllByOrderByNumberAsc())
+                .thenReturn(List.of(startStation, endStation));
+        when(availabilityRepository.findLatestPerStationSince(any()))
+                .thenReturn(
+                        List.of(availability(startStation, 5, 10), availability(endStation, 2, 8)));
+        when(googleMapsClient.distanceMatrix(anyList(), anyList(), eq("walking")))
+                .thenAnswer(
+                        invocation -> {
+                            List<LatLon> origins = invocation.getArgument(0);
+                            List<LatLon> destinations = invocation.getArgument(1);
+                            if (origins.size() == 1 && destinations.size() == 2) {
+                                return new int[][] {{100, 120}};
+                            }
+                            // 终点站到目的地的步行矩阵只返回一行：第二行缺失按 UNREACHABLE 处理
+                            if (origins.size() == 2 && destinations.size() == 1) {
+                                return new int[][] {{80}};
+                            }
+                            return new int[0][0];
+                        });
+        when(googleMapsClient.distanceMatrix(anyList(), anyList(), eq("bicycling")))
+                .thenReturn(new int[][] {{300, 400}, {200, 250}});
+
+        JourneyRequestDTO request =
+                new JourneyRequestDTO(null, null, new GeoPointDTO(53.34, -6.26), new GeoPointDTO(53.33, -6.25));
+
+        JourneyPlanResponseVO response = journeyService.plan(request);
+
+        // 步行矩阵缺行使终点下标 1 不可达，唯一可行组合为 start=站点2 → end=站点1
+        assertThat(response.routeInfo().startStation().number()).isEqualTo(2);
+        assertThat(response.routeInfo().endStation().number()).isEqualTo(1);
+    }
+
     private static Station station(int number, double lat, double lon) {
         Station station = new Station();
         station.setNumber(number);

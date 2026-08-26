@@ -28,6 +28,9 @@ class StationControllerTest {
     @Mock
     private StationService stationService;
 
+    @Mock
+    private dev.kaiwen.bikes.service.PredictionService predictionService;
+
     @InjectMocks
     private StationController stationController;
 
@@ -75,5 +78,20 @@ class StationControllerTest {
                 .andExpect(jsonPath("$.code").value(ApiCodes.SUCCESS))
                 .andExpect(jsonPath("$.data[0].number").value(1))
                 .andExpect(jsonPath("$.data[0].available_bikes").value(5));
+    }
+
+    @Test
+    void getPrediction_returnsPointList() throws Exception {
+        when(predictionService.predict(1))
+                .thenReturn(
+                        List.of(
+                                new dev.kaiwen.bikes.dto.response.PredictionPointVO(
+                                        "2026-01-01T10:00:00", 12)));
+
+        mockMvc.perform(get("/api/stations/1/prediction"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(ApiCodes.SUCCESS))
+                .andExpect(jsonPath("$.data[0].forecast_time").value("2026-01-01T10:00:00"))
+                .andExpect(jsonPath("$.data[0].predicted_available_bikes").value(12));
     }
 }
