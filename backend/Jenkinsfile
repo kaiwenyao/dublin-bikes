@@ -203,7 +203,7 @@ spec:
                                     alwaysLinkToLastBuild: true,
                                     allowMissing: false
                                 ])
-                            } catch (err) {
+                            } catch (Throwable err) {
                                 echo "publishHTML skipped (HTML Publisher plugin not installed?): ${err}"
                             }
                         }
