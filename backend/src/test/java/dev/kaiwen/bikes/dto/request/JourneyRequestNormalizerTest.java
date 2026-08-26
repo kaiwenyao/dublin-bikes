@@ -72,6 +72,13 @@ class JourneyRequestNormalizerTest {
         assertValidationError(dto, "provide either");
     }
 
+    @Test
+    void normalize_rejectsBlankAddressStrings() {
+        JourneyRequestDTO dto = new JourneyRequestDTO("  ", "  ", null, null);
+
+        assertValidationError(dto, "provide either");
+    }
+
     private static void assertValidationError(JourneyRequestDTO dto, String messageFragment) {
         assertThatThrownBy(() -> JourneyRequestNormalizer.normalize(dto))
                 .isInstanceOf(BusinessException.class)

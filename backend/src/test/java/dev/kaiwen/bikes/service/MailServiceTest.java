@@ -53,6 +53,53 @@ class MailServiceTest {
         verify(mailSender, never()).send(any(MimeMessage.class));
     }
 
+    @Test
+    void sendVerificationEmail_skipsWhenHostBlank() throws Exception {
+        setField("mailHost", " ");
+
+        mailService.sendVerificationEmail("alice@example.com", "123456", 5, "activation-token");
+
+        verify(mailSender, never()).send(any(MimeMessage.class));
+    }
+
+    @Test
+    void sendVerificationEmail_skipsWhenFromBlank() throws Exception {
+        mailService =
+                new MailService(provider(mailSender), mock(TemplateEngine.class), new MailProperties("", null, null));
+        setField("mailHost", "smtp.example.com");
+
+        mailService.sendVerificationEmail("alice@example.com", "123456", 5, "activation-token");
+
+        verify(mailSender, never()).send(any(MimeMessage.class));
+    }
+
+    @Test
+    void sendVerificationEmail_nullFromName_usesDefaultDisplayName() throws Exception {
+        mailService =
+                new MailService(
+                        provider(mailSender),
+                        mock(TemplateEngine.class, invocation -> "<p>123456</p>"),
+                        new MailProperties("bikes@example.com", null, null));
+        setField("mailHost", "smtp.example.com");
+        when(mailSender.createMimeMessage()).thenReturn(new MimeMessage(Session.getInstance(new Properties())));
+
+        mailService.sendVerificationEmail("alice@example.com", "123456", 5, "activation-token");
+
+        verify(mailSender).send(any(MimeMessage.class));
+    }
+
+    @Test
+    void sendVerificationEmail_sendFails_isSwallowed() {
+        when(mailSender.createMimeMessage()).thenReturn(new MimeMessage(Session.getInstance(new Properties())));
+        org.mockito.Mockito.doThrow(new RuntimeException("smtp down"))
+                .when(mailSender)
+                .send(any(MimeMessage.class));
+
+        org.assertj.core.api.Assertions.assertThatCode(
+                        () -> mailService.sendVerificationEmail("alice@example.com", "123456", 5, "activation-token"))
+                .doesNotThrowAnyException();
+    }
+
     private void setField(String name, Object value) throws Exception {
         var field = MailService.class.getDeclaredField(name);
         field.setAccessible(true);

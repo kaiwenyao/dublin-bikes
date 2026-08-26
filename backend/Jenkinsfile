@@ -177,7 +177,40 @@ spec:
                     }
                 }
 
-                stage('5. Build & Push Docker Image') {
+                stage('5. Code Coverage') {
+                    steps {
+                        container('maven') {
+                            dir('backend') {
+                                sh '''
+                                echo "Generating merged JaCoCo report (unit + integration tests)"
+                                # 单元测试和集成测试阶段的 agent 先后写入同一个 target/jacoco.exec（追加模式），
+                                # 这里基于累计数据重新生成一份包含两类测试的完整覆盖率报告。
+                                mvn -B -ntp jacoco:report
+                                '''
+                            }
+                        }
+                        // 归档 HTML 报告到构建产物（任何 Jenkins 都可用）。
+                        // 若装了 HTML Publisher 插件，还会在构建页面生成 "JaCoCo Coverage" 标签页直接在线看；
+                        // 没装也不影响构建，仅回退到下载产物查看。
+                        archiveArtifacts artifacts: 'backend/target/site/jacoco/**', allowEmptyArchive: false
+                        script {
+                            try {
+                                publishHTML(target: [
+                                    reportName: 'JaCoCo Coverage',
+                                    reportDir: 'backend/target/site/jacoco',
+                                    reportFiles: 'index.html',
+                                    keepAll: true,
+                                    alwaysLinkToLastBuild: true,
+                                    allowMissing: false
+                                ])
+                            } catch (Throwable err) {
+                                echo "publishHTML skipped (HTML Publisher plugin not installed?): ${err}"
+                            }
+                        }
+                    }
+                }
+
+                stage('6. Build & Push Docker Image') {
                     when {
                         not { changeRequest() }
                     }
@@ -215,7 +248,7 @@ spec:
                     }
                 }
 
-                stage('6. Deploy to Server') {
+                stage('7. Deploy to Server') {
                     when {
                         expression {
                             def rawBranch = env.BRANCH_NAME ?: env.GIT_BRANCH ?: ''
