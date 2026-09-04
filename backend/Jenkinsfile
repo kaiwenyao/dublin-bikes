@@ -4,7 +4,7 @@ pipeline {
             cloud 'kubernetes'
             defaultContainer 'maven'
             // -----------------------------------------------------------------------------
-            // Pod 定义说明：两个业务容器（maven + docker），Jenkins K8s 插件自动注入 jnlp。
+            // Pod 定义说明：两个业务容器（maven + docker），jnlp 的默认镜像和连接参数由插件补齐。
             //
             // maven 容器：编译、单元测试、集成测试、打包（内含 JDK 21 + Maven）。
             //   - 挂载 Docker socket：集成测试阶段 Testcontainers 通过它创建 PostgreSQL 容器。
@@ -21,7 +21,17 @@ kind: Pod
 metadata:
   labels:
     jenkins/label: dublin-bikes-backend-build
+    ci.kaiwen.dev/workload: maven-build
 spec:
+  # 三个 Java 项目及其分支共用标签：同一节点最多一个 Maven 构建 Pod。
+  # 节点忙时排队，不将构建挤到同一台机器；无需硬编码节点名。
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              ci.kaiwen.dev/workload: maven-build
+          topologyKey: kubernetes.io/hostname
   containers:
     - name: maven
       image: maven:3.9-eclipse-temurin-21
@@ -31,6 +41,14 @@ spec:
         - "9999999"
       tty: true
       workingDir: /home/jenkins/agent
+      # 与 eventpulse-backend 的已用预算一致；限制覆盖 Maven 及其测试 JVM。
+      resources:
+        requests:
+          cpu: "500m"
+          memory: 2Gi
+        limits:
+          cpu: "2000m"
+          memory: 4Gi
       env:
         # 【调整一】告诉 Testcontainers 该用哪个地址连它起的容器。
         # Testcontainers 默认假定容器映射到 localhost，但守护进程在宿主节点上，
@@ -63,9 +81,26 @@ spec:
         - "9999999"
       tty: true
       workingDir: /home/jenkins/agent
+      # 只限制 CLI；经宿主 socket 创建的容器/镜像构建不受此上限约束。
+      resources:
+        requests:
+          cpu: "100m"
+          memory: 128Mi
+        limits:
+          cpu: "500m"
+          memory: 256Mi
       volumeMounts:
         - mountPath: /var/run/docker.sock
           name: docker-sock
+    # 保留插件默认镜像和连接参数，仅补充 Agent 的 request / limit。
+    - name: jnlp
+      resources:
+        requests:
+          cpu: "100m"
+          memory: 256Mi
+        limits:
+          cpu: "500m"
+          memory: 512Mi
   volumes:
     # Maven 本地仓库：节点本地 hostPath，与 eventpulse-backend 等所有 Java 流水线
     # 共用同一路径。相比原先的 NFS PVC（jenkins-maven-cache）：依赖解析和 JAR
