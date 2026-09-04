@@ -45,12 +45,12 @@ spec:
         - name: TESTCONTAINERS_RYUK_DISABLED
           value: "true"
       volumeMounts:
-        # Maven 本地仓库（依赖缓存），挂集群共享的 NFS PVC，任何节点上的构建
-        # 都能复用同一份缓存，详见下方 volumes。
-        # 注意：镜像默认用户是 root，家目录是 /root，所以仓库挂在 /root/.m2/repository
-        # （而非 /home/jenkins/.m2 —— 后者既非该镜像的家目录，先前底层还是
-        # emptyDir，等于从不跨构建缓存）。
-        - mountPath: /root/.m2/repository
+        # Maven 本地仓库（依赖缓存），挂节点本地 hostPath：缓存随节点持久化，
+        # Pod 销毁不丢；与 eventpulse-backend 共用同一份，详见下方 volumes。
+        # 挂 /var/cache/maven/repository 而非镜像默认的 /root/.m2/repository：
+        # 每个 mvn 显式传 -Dmaven.repo.local 指向这里，不依赖镜像的默认用户/
+        # 家目录，将来换镜像（如非 root 变体）也不会悄悄和缓存失联。
+        - mountPath: /var/cache/maven/repository
           name: maven-repo
         # 宿主节点的 Docker socket：集成测试阶段 Testcontainers 需要它创建 PostgreSQL 容器。
         - mountPath: /var/run/docker.sock
@@ -67,14 +67,17 @@ spec:
         - mountPath: /var/run/docker.sock
           name: docker-sock
   volumes:
-    # Maven 本地仓库，使用集群里现成的 NFS PVC（jenkins-maven-cache，RWX）。
-    # 数据实际存在共享存储上：无论构建 Pod 被调度到哪个节点，挂上的都是同一份
-    # 依赖缓存，不再像 emptyDir 那样随 Pod 重建而丢失、每次构建都全量重下。
-    # 并发构建共享同一份仓库，Maven 对并发写本地仓库无锁保护，理论上有互相
-    # 干扰的可能（与 hostPath 方案同样的风险），可接受。
+    # Maven 本地仓库：节点本地 hostPath，与 eventpulse-backend 等所有 Java 流水线
+    # 共用同一路径。相比原先的 NFS PVC（jenkins-maven-cache）：依赖解析和 JAR
+    # 读取不再走 NFS，构建更快；代价是缓存按节点各存一份，新节点首次构建要
+    # 全量下载一次（DirectoryOrCreate 自动建目录）。
+    # 同一节点上并发构建共享此仓库且会并发写，所以每个 mvn 必须带
+    # file-lock + file-gav 跨进程锁参数——与 eventpulse 的约定一致，缺了就可能
+    # 互相踩坏元数据。
     - name: maven-repo
-      persistentVolumeClaim:
-        claimName: jenkins-maven-cache
+      hostPath:
+        path: /var/cache/jenkins/maven/repository
+        type: DirectoryOrCreate
     - name: docker-sock
       hostPath:
         path: /var/run/docker.sock
@@ -126,7 +129,10 @@ spec:
                                 sh '''
                                 java -version
                                 mvn -version
-                                mvn -B -ntp -DskipTests compile
+                                mvn -B -ntp -DskipTests compile \
+                                    -Dmaven.repo.local=/var/cache/maven/repository \
+                                    -Daether.syncContext.named.factory=file-lock \
+                                    -Daether.syncContext.named.nameMapper=file-gav
                                 '''
                             }
                         }
@@ -141,7 +147,10 @@ spec:
                                 echo "Running unit tests (slice tests, no external services)"
                                 mvn -B -ntp test \
                                     -Dtest='!dev.kaiwen.bikes.it.**' \
-                                    -Dsurefire.failIfNoSpecifiedTests=false
+                                    -Dsurefire.failIfNoSpecifiedTests=false \
+                                    -Dmaven.repo.local=/var/cache/maven/repository \
+                                    -Daether.syncContext.named.factory=file-lock \
+                                    -Daether.syncContext.named.nameMapper=file-gav
                                 '''
                             }
                         }
@@ -165,7 +174,10 @@ spec:
                                 mvn -B -ntp test \
                                     -Dspring.profiles.active=it \
                                     -Dtest='dev.kaiwen.bikes.it.**' \
-                                    -Dsurefire.failIfNoSpecifiedTests=false
+                                    -Dsurefire.failIfNoSpecifiedTests=false \
+                                    -Dmaven.repo.local=/var/cache/maven/repository \
+                                    -Daether.syncContext.named.factory=file-lock \
+                                    -Daether.syncContext.named.nameMapper=file-gav
                                 '''
                             }
                         }
@@ -185,7 +197,10 @@ spec:
                                 echo "Generating merged JaCoCo report (unit + integration tests)"
                                 # 单元测试和集成测试阶段的 agent 先后写入同一个 target/jacoco.exec（追加模式），
                                 # 这里基于累计数据重新生成一份包含两类测试的完整覆盖率报告。
-                                mvn -B -ntp jacoco:report
+                                mvn -B -ntp jacoco:report \
+                                    -Dmaven.repo.local=/var/cache/maven/repository \
+                                    -Daether.syncContext.named.factory=file-lock \
+                                    -Daether.syncContext.named.nameMapper=file-gav
                                 '''
                             }
                         }
