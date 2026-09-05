@@ -13,7 +13,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 @EnableJpaRepositories(basePackages = "dev.kaiwen.bikes.repository")
 public class DublinBikesApplication {
 
-	public static void main(String[] args) {
-		SpringApplication.run(DublinBikesApplication.class, args);
-	}
+    public static void main(String[] args) {
+        SpringApplication.run(DublinBikesApplication.class, args);
+    }
 }

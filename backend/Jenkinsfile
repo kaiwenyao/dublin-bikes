@@ -174,7 +174,40 @@ spec:
                     }
                 }
 
-                stage('3. Unit Tests') {
+                stage('3. Static Analysis') {
+                    steps {
+                        container('maven') {
+                            dir('backend') {
+                                // Checkstyle（源码约定） + SpotBugs（字节码缺陷）静态分析门禁。
+                                //
+                                // 放在测试之前：静态分析只需上一阶段的编译产物，几分钟内
+                                // 给出反馈；风格或低级缺陷没必要等到跑完测试才暴露。
+                                //
+                                // 命令拆解：checkstyle:check 只读源码；spotbugs:check 分析
+                                // compile 阶段产出的 class，超过阈值（Medium）即失败。
+                                // 配置文件（checkstyle.xml / spotbugs-exclude.xml）随代码
+                                // 版本化在 backend/ 目录，路径为工作目录相对路径。
+                                //
+                                // 报告归档：checkstyle-result.xml 与 spotbugsXml.xml 供下载
+                                // 复查（后续阶段无 clean，但归档保证失败时可直接定位）。
+                                sh '''
+                                echo "Running static analysis (Checkstyle + SpotBugs)"
+                                mvn -B -ntp checkstyle:check spotbugs:check \
+                                    -Dmaven.repo.local=/var/cache/maven/repository \
+                                    -Daether.syncContext.named.factory=file-lock \
+                                    -Daether.syncContext.named.nameMapper=file-gav
+                                '''
+                            }
+                        }
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'backend/target/checkstyle-result.xml, backend/target/spotbugsXml.xml', allowEmptyArchive: true
+                        }
+                    }
+                }
+
+                stage('4. Unit Tests') {
                     steps {
                         container('maven') {
                             dir('backend') {
@@ -197,7 +230,7 @@ spec:
                     }
                 }
 
-                stage('4. Integration Tests') {
+                stage('5. Integration Tests') {
                     steps {
                         container('maven') {
                             dir('backend') {
@@ -224,7 +257,7 @@ spec:
                     }
                 }
 
-                stage('5. Code Coverage') {
+                stage('6. Code Coverage') {
                     steps {
                         container('maven') {
                             dir('backend') {
@@ -260,7 +293,7 @@ spec:
                     }
                 }
 
-                stage('6. Build & Push Docker Image') {
+                stage('7. Build & Push Docker Image') {
                     when {
                         not { changeRequest() }
                     }
@@ -298,7 +331,7 @@ spec:
                     }
                 }
 
-                stage('7. Deploy to Server') {
+                stage('8. Deploy to Server') {
                     when {
                         expression {
                             def rawBranch = env.BRANCH_NAME ?: env.GIT_BRANCH ?: ''
