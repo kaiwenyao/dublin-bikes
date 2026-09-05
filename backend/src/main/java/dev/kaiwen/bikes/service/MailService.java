@@ -2,8 +2,6 @@ package dev.kaiwen.bikes.service;
 
 import dev.kaiwen.bikes.config.MailProperties;
 import jakarta.mail.internet.MimeMessage;
-import java.util.HashMap;
-import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;

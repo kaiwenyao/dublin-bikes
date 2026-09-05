@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FindBugsFilter>
+    <!-- Spring 构造器注入把协作者「原样」存进字段，DTO/record 的集合字段也直接
+         暴露给 Jackson 序列化。EI_EXPOSE_REP / EI_EXPOSE_REP2 对这类代码几乎
+         必然报警且无实际风险（组件生命周期由容器管理，DTO 不跨信任边界），
+         行业通行做法是整体排除，让 SpotBugs 聚焦真正的高危缺陷。 -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP"/>
+    </Match>
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP2"/>
+    </Match>
+</FindBugsFilter>
