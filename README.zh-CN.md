@@ -4,9 +4,12 @@
 
 一个全栈的 Dublin Bikes（都柏林公共自行车）平台：实时站点可用性、天气、行程规划、基于机器学习的可借车辆预测、用户账户，以及 LLM 对话助手。采用单仓（monorepo）结构，包含 Spring Boot 后端、React 前端和两个 Python 微服务。
 
+![Dublin Bikes 首页](docs/images/01-home.png)
+
 ## 📋 目录
 
 - [✨ 功能特性](#-功能特性)
+- [📸 界面截图](#-界面截图)
 - [🧱 架构](#-架构)
 - [🚀 快速开始](#-快速开始)
   - [🔧 安装](#-安装)
@@ -25,6 +28,18 @@
 - 🤖 **可借车辆预测** — 以 FastAPI 微服务承载 scikit-learn 模型，通过 `/api/stations/{n}/prediction` 对外暴露。
 - 🔐 **用户账户** — 注册、邮件验证（验证码 + 链接）、JWT access/refresh，以及通过 `token_version` 实现的即时登出。
 - 💬 **LLM 对话助手** — DeepSeek + LangChain 独立 Python 服务；Spring 代理 SSE 流式输出并执行会话 ACL。
+
+## 📸 界面截图
+
+| ![实时站点地图](docs/images/02-maps-overview.png) | ![可借车辆预测](docs/images/03-maps-prediction.png) |
+|---|---|
+| **实时站点地图** — 全城 115 个站点实时可用性，侧栏集成天气与行程规划 | **可借车辆预测** — 站点级 4 小时 / 24 小时预测，由 scikit-learn 微服务推理 |
+| ![行程规划](docs/images/04-journey-planner.png) | ![LLM 对话助手](docs/images/05-chat.png) |
+| **行程规划** — 「步行 → 骑行 → 步行」全局最小总时长路线（三一学院 → 都柏林机场） | **LLM 对话助手** — 支持工具调用，基于实时站点数据作答并逐字流式输出 |
+| ![个人资料](docs/images/06-profile.png) | ![登录](docs/images/07-login.png) |
+| **用户账户** — 基于 JWT 鉴权、邮箱验证与即时登出的个人资料页 | **登录** — JWT access/refresh 双令牌，支持记住我 |
+| ![注册](docs/images/08-register.png) | |
+| **注册** — 6 位邮箱验证码或激活链接完成账号激活 | |
 
 ## 🧱 架构
 

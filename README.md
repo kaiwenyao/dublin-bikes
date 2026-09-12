@@ -4,9 +4,12 @@
 
 A full-stack Dublin Bikes (公共自行车) platform: live station availability, weather, journey planning, ML-based bike-availability prediction, user accounts, and an LLM chat assistant. Monorepo with a Spring Boot backend, a React frontend, and two Python microservices.
 
+![Dublin Bikes landing page](docs/images/01-home.png)
+
 ## 📋 Table of Contents
 
 - [✨ Features](#-features)
+- [📸 Screenshots](#-screenshots)
 - [🧱 Architecture](#-architecture)
 - [🚀 Getting Started](#-getting-started)
   - [🔧 Installation](#-installation)
@@ -25,6 +28,18 @@ A full-stack Dublin Bikes (公共自行车) platform: live station availability,
 - 🤖 **Bike-availability prediction** — a scikit-learn model served as a FastAPI microservice, exposed through `/api/stations/{n}/prediction`.
 - 🔐 **User accounts** — registration, email verification (code + link), JWT access/refresh, and instant logout via `token_version`.
 - 💬 **LLM chat assistant** — DeepSeek + LangChain in a standalone Python service; Spring proxies SSE streaming and enforces session ACLs.
+
+## 📸 Screenshots
+
+| ![Live station map](docs/images/02-maps-overview.png) | ![Availability prediction](docs/images/03-maps-prediction.png) |
+|---|---|
+| **Live station map** — real-time availability for all 115 stations, with weather and the journey planner alongside | **Availability prediction** — 4 h / 24 h per-station forecast served by the scikit-learn microservice |
+| ![Journey planner](docs/images/04-journey-planner.png) | ![LLM chat assistant](docs/images/05-chat.png) |
+| **Journey planner** — walk → cycle → walk minimum-time routing over the nearest stations (Trinity College → Dublin Airport) | **LLM chat assistant** — tool-calling assistant answers with live station data and streams token by token |
+| ![Profile](docs/images/06-profile.png) | ![Sign in](docs/images/07-login.png) |
+| **User accounts** — profile page backed by JWT auth, email verification, and instant logout | **Sign in** — JWT access/refresh login with remember-me |
+| ![Create account](docs/images/08-register.png) | |
+| **Create account** — registration with 6-digit email verification code or activation link | |
 
 ## 🧱 Architecture
 
