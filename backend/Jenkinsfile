@@ -2,6 +2,19 @@ pipeline {
     agent {
         kubernetes {
             cloud 'kubernetes'
+            // 继承独立的 ci-maven-base 公共模板：统一维护节点选择、跨节点分散和
+            // Maven 反亲和性（每节点最多一个 maven-build，节点忙时排队）；该模板
+            // 不再继承 ci-base。
+            //
+            // 调度规则全部上提的原因：插件的 yaml merge() 只按白名单字段合并，
+            // 子模板 yaml 里的 affinity / topologySpreadConstraints 会被静默丢弃
+            // （PodTemplateUtils.combine 不处理这两个字段，JENKINS-64787），
+            // 因此原先内联的 podAntiAffinity 已删除、由父模板维护才能生效。
+            inheritFrom 'ci-maven-base'
+            // 合并策略很关键：插件默认是「覆盖」，会整体顶掉父模板 spec 里的
+            // 公共调度规则；merge() 按字段合并，父模板规则保留，本流水线再
+            // 叠加自己的容器与卷。
+            yamlMergeStrategy merge()
             defaultContainer 'maven'
             // -----------------------------------------------------------------------------
             // Pod 定义说明：两个业务容器（maven + docker），jnlp 的默认镜像和连接参数由插件补齐。
@@ -23,15 +36,11 @@ metadata:
     jenkins/label: dublin-bikes-backend-build
     ci.kaiwen.dev/workload: maven-build
 spec:
-  # 三个 Java 项目及其分支共用标签：同一节点最多一个 Maven 构建 Pod。
-  # 节点忙时排队，不将构建挤到同一台机器；无需硬编码节点名。
-  affinity:
-    podAntiAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        - labelSelector:
-            matchLabels:
-              ci.kaiwen.dev/workload: maven-build
-          topologyKey: kubernetes.io/hostname
+  # 调度规则（nodeSelector、topologySpreadConstraints、podAntiAffinity）不在
+  # 此声明，统一由父模板 ci-maven-base 维护：merge() 会静默丢弃子模板 yaml
+  # 里的 affinity / topologySpreadConstraints（JENKINS-64787），写在子模板无效。
+  # labels 保留：ci.kaiwen.dev/workload 是父模板反亲和 labelSelector 的匹配目标，
+  # 且 labels 属于可正确合并的字段。
   containers:
     - name: maven
       image: maven:3.9-eclipse-temurin-21
