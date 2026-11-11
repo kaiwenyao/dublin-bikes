@@ -89,6 +89,34 @@ class AvailabilityRepositoryTest {
                         org.assertj.core.groups.Tuple.tuple(2, 2));
     }
 
+    @Test
+    void findLatestPerStationScrapedSince_keepsStationWhoseUpstreamTimestampIsStale() {
+        // JCDecaux can leave last_update frozen for days (station closed for maintenance, broken
+        // dock) while the scraper keeps writing a row every 5 minutes. /status must keep reporting
+        // that station, so its window filters on requested_at (scrape time), not on timestamp.
+        LocalDateTime now = LocalDateTime.parse("2025-01-20T12:00:00");
+        persistAvailability(1, now.minusDays(3), now.minusMinutes(5), 4, 6);
+
+        List<Availability> byScrapeTime =
+                availabilityRepository.findLatestPerStationScrapedSince(now.minusHours(24));
+
+        assertThat(byScrapeTime).hasSize(1);
+        assertThat(byScrapeTime.getFirst().getNumber()).isEqualTo(1);
+        assertThat(byScrapeTime.getFirst().getAvailableBikes()).isEqualTo(4);
+
+        // The upstream-time window (still used by journey planning) correctly excludes it.
+        assertThat(availabilityRepository.findLatestPerStationSince(now.minusHours(24))).isEmpty();
+    }
+
+    @Test
+    void findLatestPerStationScrapedSince_dropsStationWithoutRecentScrapes() {
+        LocalDateTime now = LocalDateTime.parse("2025-01-20T12:00:00");
+        persistAvailability(1, now.minusDays(2), now.minusDays(2), 4, 6);
+
+        assertThat(availabilityRepository.findLatestPerStationScrapedSince(now.minusHours(24)))
+                .isEmpty();
+    }
+
     private void persistStation(int number, String name) {
         Station station = new Station();
         station.setNumber(number);
@@ -105,6 +133,15 @@ class AvailabilityRepositoryTest {
 
     private void persistAvailability(
             int number, LocalDateTime timestamp, int bikes, int stands) {
+        persistAvailability(number, timestamp, timestamp.plusSeconds(5), bikes, stands);
+    }
+
+    private void persistAvailability(
+            int number,
+            LocalDateTime timestamp,
+            LocalDateTime requestedAt,
+            int bikes,
+            int stands) {
         Availability availability = new Availability();
         availability.setNumber(number);
         availability.setAvailableBikes(bikes);
@@ -112,7 +149,7 @@ class AvailabilityRepositoryTest {
         availability.setStatus("OPEN");
         availability.setLastUpdate(1L);
         availability.setTimestamp(timestamp);
-        availability.setRequestedAt(timestamp.plusSeconds(5));
+        availability.setRequestedAt(requestedAt);
         entityManager.persist(availability);
     }
 }

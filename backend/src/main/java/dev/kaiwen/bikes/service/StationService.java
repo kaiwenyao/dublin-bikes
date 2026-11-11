@@ -20,12 +20,15 @@ import org.springframework.transaction.annotation.Transactional;
 public class StationService {
 
     /**
-     * Look-back window for {@code GET /api/stations/status}.
+     * Look-back window for {@code GET /api/stations/status}, measured in <em>scrape</em> time
+     * ({@code availability.requested_at}), not in upstream {@code last_update} time.
      *
      * <p>The scraper writes every station every 5 minutes, so 24 h is ~288 rows/station (≈33k rows)
      * for the window function to rank — versus ~1M rows for the whole retained history. A station
-     * with no row in this window drops out of the response and the frontend already renders it with
-     * the "no status" grey marker; that only happens when the whole scraper is down for a day.
+     * drops out only when the scraper has not written a row for it in this window (the frontend
+     * already renders that as the "no status" grey marker); a station whose JCDecaux
+     * {@code last_update} is frozen — closed for maintenance, broken dock — keeps its status as
+     * long as we keep collecting it.
      */
     static final int LATEST_WINDOW_HOURS = 24;
 
@@ -45,10 +48,12 @@ public class StationService {
     }
 
     public List<AvailabilityVO> getLatestStatusForAllStations() {
-        // availability.timestamp is naive UTC (scraper/time_utils); never use JVM default zone
+        // Bound by scrape time: requested_at is when the scraper collected the row, whereas
+        // timestamp mirrors JCDecaux's last_update, which can stay frozen for days on a station
+        // that is still being collected. Both are naive UTC (scraper/time_utils).
         LocalDateTime since = LocalDateTime.now(ZoneOffset.UTC).minusHours(LATEST_WINDOW_HOURS);
         return stationMapper.toAvailabilityVOList(
-                availabilityRepository.findLatestPerStationSince(since));
+                availabilityRepository.findLatestPerStationScrapedSince(since));
     }
 
     private void requireStation(int number) {

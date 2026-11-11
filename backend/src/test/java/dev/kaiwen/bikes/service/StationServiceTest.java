@@ -88,7 +88,7 @@ class StationServiceTest {
         Availability row = new Availability();
         AvailabilityVO vo = new AvailabilityVO(1, 5, 10, "OPEN", 1L, "2025-01-20T10:00:00", "2025-01-20T10:00:05");
         ArgumentCaptor<LocalDateTime> sinceCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
-        when(availabilityRepository.findLatestPerStationSince(sinceCaptor.capture()))
+        when(availabilityRepository.findLatestPerStationScrapedSince(sinceCaptor.capture()))
                 .thenReturn(List.of(row));
         when(stationMapper.toAvailabilityVOList(List.of(row))).thenReturn(List.of(vo));
 

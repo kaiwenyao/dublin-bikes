@@ -129,6 +129,25 @@ class StationRestIntegrationTest extends IntegrationTestBase {
         assertThat(s2.get("available_bikes")).isEqualTo(12);
     }
 
+    @Test
+    void getStatus_keepsStationWhoseUpstreamTimestampIsStaleButScrapeIsRecent() {
+        persistStation(77, "Station Stale", 53.35f, -6.25f);
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        // JCDecaux last_update frozen 3 days ago (e.g. station closed for maintenance) while the
+        // scraper still collected a row 2 minutes ago. /status must keep reporting it.
+        persistAvailability(77, now.minusDays(3), now.minusMinutes(2), 6, 9);
+
+        ResponseEntity<Map> resp = restTemplate.getForEntity("/api/stations/status", Map.class);
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Map<?, ?> body = resp.getBody();
+        assertThat(body).isNotNull();
+        List<?> data = (List<?>) body.get("data");
+        Map<?, ?> row = findRowByNumber(data, 77);
+        assertThat(row.get("available_bikes")).isEqualTo(6);
+        assertThat(row.get("available_bike_stands")).isEqualTo(9);
+    }
+
     @SuppressWarnings("unchecked")
     private Map<String, Object> findRowByNumber(List<?> data, int number) {
         return (Map<String, Object>)
@@ -156,6 +175,15 @@ class StationRestIntegrationTest extends IntegrationTestBase {
     }
 
     private void persistAvailability(int number, LocalDateTime timestamp, int bikes, int stands) {
+        persistAvailability(number, timestamp, timestamp, bikes, stands);
+    }
+
+    private void persistAvailability(
+            int number,
+            LocalDateTime timestamp,
+            LocalDateTime requestedAt,
+            int bikes,
+            int stands) {
         Availability availability = new Availability();
         availability.setNumber(number);
         availability.setAvailableBikes(bikes);
@@ -163,8 +191,9 @@ class StationRestIntegrationTest extends IntegrationTestBase {
         availability.setStatus("OPEN");
         availability.setLastUpdate(1L);
         availability.setTimestamp(timestamp);
-        // requested_at is the scrape time — always <= timestamp (the JCDecaux data time)
-        availability.setRequestedAt(timestamp);
+        // requested_at is the scrape time. For scraped-in-this-run rows it equals/updates the
+        // upstream data time; the stale-timestamp test overrides it explicitly.
+        availability.setRequestedAt(requestedAt);
         availabilityRepository.saveAndFlush(availability);
     }
 }
