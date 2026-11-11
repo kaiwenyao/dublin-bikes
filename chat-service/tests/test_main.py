@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
@@ -722,3 +723,40 @@ def test_build_messages_applies_the_window():
     assert len(messages) == 6
     assert messages[2].content == "h3"
     assert messages[-1] is pending
+
+
+def test_lifespan_disposes_databases_on_normal_shutdown():
+    import main
+
+    disposed: list[str] = []
+    with (
+        patch.object(main, "get_settings", return_value=Settings(_env_file=None)),
+        patch.object(main, "_dispose_databases", lambda: disposed.append("normal")),
+    ):
+
+        async def run() -> None:
+            async with main._lifespan(main.app):
+                pass
+
+        asyncio.run(run())
+
+    assert disposed == ["normal"]
+
+
+def test_lifespan_disposes_databases_when_the_context_raises():
+    import main
+
+    disposed: list[str] = []
+    with (
+        patch.object(main, "get_settings", return_value=Settings(_env_file=None)),
+        patch.object(main, "_dispose_databases", lambda: disposed.append("error")),
+    ):
+
+        async def run() -> None:
+            async with main._lifespan(main.app):
+                raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError):
+            asyncio.run(run())
+
+    assert disposed == ["error"]

@@ -284,8 +284,17 @@ async def _lifespan(_app: FastAPI):
             await run_in_threadpool(_warmup_databases, settings)
         except Exception:
             logger.warning("chat-service database warmup failed", exc_info=True)
-    yield
-    await run_in_threadpool(_dispose_databases)
+    try:
+        yield
+    finally:
+        # Runs on normal shutdown, on an exception raised into the context, and on
+        # cancellation. Deliberately synchronous: awaiting inside a cancelled task raises
+        # CancelledError again before the pools are closed, and dispose()/close() are fast
+        # shutdown-only calls.
+        try:
+            _dispose_databases()
+        except Exception:
+            logger.exception("failed to dispose chat-service database resources")
 
 
 app = FastAPI(
