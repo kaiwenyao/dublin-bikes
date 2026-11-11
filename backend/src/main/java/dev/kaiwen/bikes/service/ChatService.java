@@ -29,8 +29,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -40,7 +40,6 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class ChatService {
 
     private static final DateTimeFormatter ISO_FMT = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
@@ -51,16 +50,35 @@ public class ChatService {
     private final ChatTitleGenerator chatTitleGenerator;
     private final ChatServiceProperties properties;
     private final ObjectMapper objectMapper;
+    /**
+     * Shared, keep-alive HTTP client for the SSE relay (bean {@code chatServiceHttpClient} in
+     * {@code ChatServiceConfig}). Built once: creating an {@link HttpClient} per chat message also
+     * created a selector thread and a fresh connection for every conversation turn.
+     */
+    private final HttpClient httpClient;
+
+    public ChatService(
+            ChatSessionRepository chatSessionRepository,
+            ChatServiceClient chatServiceClient,
+            ChatTitleGenerator chatTitleGenerator,
+            ChatServiceProperties properties,
+            ObjectMapper objectMapper,
+            @Qualifier("chatServiceHttpClient") HttpClient httpClient) {
+        this.chatSessionRepository = chatSessionRepository;
+        this.chatServiceClient = chatServiceClient;
+        this.chatTitleGenerator = chatTitleGenerator;
+        this.properties = properties;
+        this.objectMapper = objectMapper;
+        this.httpClient = httpClient;
+    }
 
     public void chatStream(
             String message, String chatId, ChatRequestDTO.LocationDTO location, SseEmitter emitter) {
         int userId = currentUserId();
         String sessionId = generateSessionId(userId, chatId);
-        ensureSession(sessionId, userId);
-
-        boolean needsTitle = chatSessionRepository.findById(sessionId)
-                .map(s -> s.getTitle() == null)
-                .orElse(false);
+        // Reuse the row ensureSession just loaded instead of re-reading it (one query per message).
+        ChatSession session = ensureSession(sessionId, userId);
+        boolean needsTitle = session.getTitle() == null;
 
         String jsonBody;
         try {
@@ -80,12 +98,8 @@ public class ChatService {
         }
 
         // Uvicorn/FastAPI over HTTP/2 drops POST bodies from java.net.http.HttpClient (422).
-        // SSE upstream also expects HTTP/1.1-style streaming.
-        HttpClient client = HttpClient.newBuilder()
-                .version(HttpClient.Version.HTTP_1_1)
-                .connectTimeout(Duration.ofMillis(properties.connectTimeoutMs()))
-                .build();
-
+        // SSE upstream also expects HTTP/1.1-style streaming. The client itself is a shared bean
+        // (HTTP/1.1 + keep-alive), so consecutive turns reuse the same connection and executor.
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(properties.baseUrl() + "/chat/stream"))
                 .header("Content-Type", "application/json")
@@ -99,7 +113,7 @@ public class ChatService {
                 ex -> log.debug("sse client disconnected or async error (response may be committed)", ex));
         emitter.onTimeout(() -> finishEmitter(emitter, streamStarted.get(), null));
 
-        client.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream())
+        httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofInputStream())
                 .thenAccept(response -> {
                     int status = response.statusCode();
                     try (InputStream body = response.body()) {
@@ -156,7 +170,13 @@ public class ChatService {
                 .toList();
     }
 
-    @Transactional(readOnly = true)
+    /**
+     * Ownership check + history proxy.
+     *
+     * <p>Not {@code @Transactional}: the repository lookup opens its own short read-only
+     * transaction, and the HTTP call to chat-service must not hold a pooled DB connection while it
+     * waits (chat-service itself then queries PostgreSQL for the messages).
+     */
     public List<ChatMessageVO> getSessionMessages(String sessionId) {
         int userId = currentUserId();
         ChatSession session = chatSessionRepository.findById(sessionId)

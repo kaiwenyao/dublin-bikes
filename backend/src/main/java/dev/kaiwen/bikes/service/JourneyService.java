@@ -27,11 +27,20 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * Walk → cycle → walk planner.
+ *
+ * <p>Deliberately <em>not</em> {@code @Transactional}: {@link #plan} makes up to six sequential
+ * Google Maps calls (two geocodes, two walking matrices, the cycling matrix and the walk-from-end
+ * matrix) plus retry backoff. Holding a Hikari connection for that entire time would exhaust the
+ * pool under a handful of concurrent searches, so the two repository reads below each run in their
+ * own short read-only transaction and the HTTP calls run with no connection checked out. This is
+ * safe because the entities are detached but fully populated: {@code Station} fields are eager and
+ * {@code Availability.station} (LAZY) is never dereferenced here.
+ */
 @Service
 @RequiredArgsConstructor
-@Transactional(readOnly = true)
 public class JourneyService {
 
     private static final int HAVERSINE_CANDIDATES = 10;

@@ -19,6 +19,16 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(readOnly = true)
 public class StationService {
 
+    /**
+     * Look-back window for {@code GET /api/stations/status}.
+     *
+     * <p>The scraper writes every station every 5 minutes, so 24 h is ~288 rows/station (≈33k rows)
+     * for the window function to rank — versus ~1M rows for the whole retained history. A station
+     * with no row in this window drops out of the response and the frontend already renders it with
+     * the "no status" grey marker; that only happens when the whole scraper is down for a day.
+     */
+    static final int LATEST_WINDOW_HOURS = 24;
+
     private final StationRepository stationRepository;
     private final AvailabilityRepository availabilityRepository;
     private final StationMapper stationMapper;
@@ -35,7 +45,10 @@ public class StationService {
     }
 
     public List<AvailabilityVO> getLatestStatusForAllStations() {
-        return stationMapper.toAvailabilityVOList(availabilityRepository.findLatestPerStation());
+        // availability.timestamp is naive UTC (scraper/time_utils); never use JVM default zone
+        LocalDateTime since = LocalDateTime.now(ZoneOffset.UTC).minusHours(LATEST_WINDOW_HOURS);
+        return stationMapper.toAvailabilityVOList(
+                availabilityRepository.findLatestPerStationSince(since));
     }
 
     private void requireStation(int number) {

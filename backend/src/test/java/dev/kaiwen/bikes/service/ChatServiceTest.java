@@ -3,6 +3,7 @@ package dev.kaiwen.bikes.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
@@ -23,6 +24,7 @@ import dev.kaiwen.bikes.security.AuthenticatedUser;
 import com.sun.net.httpserver.HttpServer;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -61,6 +63,13 @@ class ChatServiceTest {
     void injectDependencies() throws Exception {
         setField("objectMapper", objectMapper);
         setField("properties", properties);
+        // Real client (not a mock): the SSE tests below run against a local JDK HttpServer.
+        setField("httpClient", HttpClient.newHttpClient());
+        // chatStream now uses the ChatSession returned by ensureSession (instead of re-reading it),
+        // so tests that do not care about persistence still need saveAndFlush to return a session.
+        lenient()
+                .when(chatSessionRepository.saveAndFlush(any(ChatSession.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
     }
 
     @BeforeEach

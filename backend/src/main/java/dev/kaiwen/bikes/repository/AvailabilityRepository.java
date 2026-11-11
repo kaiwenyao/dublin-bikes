@@ -16,19 +16,14 @@ public interface AvailabilityRepository extends JpaRepository<Availability, Inte
         return findByNumberAndTimestampGreaterThanEqualOrderByTimestampDesc(number, since);
     }
 
-    @Query(
-            value =
-                    "SELECT id, number, available_bikes, available_bike_stands, status, "
-                            + "last_update, timestamp, requested_at "
-                            + "FROM ( "
-                            + "    SELECT a.*, ROW_NUMBER() OVER ( "
-                            + "        PARTITION BY a.number "
-                            + "        ORDER BY a.timestamp DESC, a.id DESC "
-                            + "    ) AS rn "
-                            + "    FROM availability a "
-                            + ") ranked WHERE ranked.rn = 1",
-            nativeQuery = true)
-    List<Availability> findLatestPerStation();
+    /**
+     * Latest availability row per station inside a time window.
+     *
+     * <p>The {@code WHERE a."timestamp" >= :since} predicate is what keeps this bounded: without
+     * it the window function ranks every row in the retained history (30 days × 115 stations ×
+     * 288 scrapes/day ≈ 1M rows) on every call. Callers must pass a window that is comfortably
+     * larger than the scrape interval so a briefly stalled scraper does not blank the response.
+     */
     @Query(
             value =
                     "SELECT id, number, available_bikes, available_bike_stands, status, "

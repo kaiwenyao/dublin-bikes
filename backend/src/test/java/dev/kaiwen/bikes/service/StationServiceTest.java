@@ -87,9 +87,17 @@ class StationServiceTest {
     void getLatestStatusForAllStations_returnsMappedRows() {
         Availability row = new Availability();
         AvailabilityVO vo = new AvailabilityVO(1, 5, 10, "OPEN", 1L, "2025-01-20T10:00:00", "2025-01-20T10:00:05");
-        when(availabilityRepository.findLatestPerStation()).thenReturn(List.of(row));
+        ArgumentCaptor<LocalDateTime> sinceCaptor = ArgumentCaptor.forClass(LocalDateTime.class);
+        when(availabilityRepository.findLatestPerStationSince(sinceCaptor.capture()))
+                .thenReturn(List.of(row));
         when(stationMapper.toAvailabilityVOList(List.of(row))).thenReturn(List.of(vo));
 
         assertThat(stationService.getLatestStatusForAllStations()).containsExactly(vo);
+
+        // Bounded look-back keeps the window function off the full retained history.
+        LocalDateTime expectedSince =
+                LocalDateTime.now(ZoneOffset.UTC).minusHours(StationService.LATEST_WINDOW_HOURS);
+        assertThat(sinceCaptor.getValue())
+                .isCloseTo(expectedSince, within(2, ChronoUnit.SECONDS));
     }
 }
