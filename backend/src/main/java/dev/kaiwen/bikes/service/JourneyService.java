@@ -34,9 +34,10 @@ import org.springframework.stereotype.Service;
  * <p>Deliberately <em>not</em> {@code @Transactional}: {@link #plan} makes up to six sequential
  * Google Maps calls (two geocodes, two walking matrices, the cycling matrix and the walk-from-end
  * matrix) plus retry backoff. Holding a Hikari connection for that entire time would exhaust the
- * pool under a handful of concurrent searches, so the two repository reads below each run in their
- * own short read-only transaction and the HTTP calls run with no connection checked out. This is
- * safe because the entities are detached but fully populated: {@code Station} fields are eager and
+ * pool under a handful of concurrent searches. The two repository reads below are declared query
+ * methods, so no service-level transaction wraps them: each borrows a pooled connection only while
+ * it executes, and the HTTP calls run with no connection checked out. This is safe because the
+ * entities are detached but fully populated: {@code Station} fields are eager and
  * {@code Availability.station} (LAZY) is never dereferenced here.
  */
 @Service

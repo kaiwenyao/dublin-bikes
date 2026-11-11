@@ -40,6 +40,7 @@
 - 新增 `_sqlalchemy_engines` + 双检锁（与既有 `_db_pools` 同一写法），按 URL 复用 `create_engine(...)`，池大小固定为 2 + 3。
 - 新增 `_repair_sslmode()`，被 `_psycopg_conninfo()`（去掉 `+psycopg`）与新的 `_sqlalchemy_url()`（保留驱动后缀）共用。
 - `_memory()` 传入共享 Engine；新增 FastAPI `lifespan`：预热与 `yield` 在**同一个** `try/finally` 内，关闭时（正常退出、异常退出、取消，包括预热期间被取消）都会 `dispose()` 所有 Engine 并 `close()` 所有 psycopg 池——清理逻辑保持同步，避免取消场景下 `await` 再次抛 `CancelledError` 而跳过释放。
+- 取消 `run_in_threadpool()` 的等待**不会**终止正在跑的工作线程（asyncio 会把 `CancelledError` 直接抛给等待方），所以清理可能与预热线程并发。资源创建因此与清理共用同一把锁，并检查 `_db_shutting_down`：清理之后仍在运行/恢复的预热线程会被拒绝创建，不会留下无人释放的池；`_lifespan` 启动时重置该标志，支持进程内重启。
 - `requirements.txt` 显式声明 `SQLAlchemy`（此前只是 `langchain-community` 的传递依赖）。
 
 **验证.** `test_sqlalchemy_engine_is_lazy_and_cached_per_url`、`test_memory_reuses_shared_engine`；`test_lifespan_disposes_databases_on_normal_shutdown` 与 `..._when_the_context_raises` 分别在正常退出、异常注入两种路径断言清理被执行。运行期可用 `pg_stat_activity` 观察 `application_name='chat-service'` 的连接数不随消息数增长。
@@ -71,7 +72,7 @@
 **修复.**
 
 - 新增 Flyway `V5__availability_retention_index.sql`：先 `DROP INDEX CONCURRENTLY IF EXISTS`，再 `CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_availability_requested_at`（并同步了 IT 版本，按 V4 的既有约定去掉 `CONCURRENTLY`）。先删是必需的：中断的并发建索引会留下同名 **INVALID** 索引，而 `IF NOT EXISTS` 只看名字，重跑会「假成功」并让 retention/`/status` 继续扫表；V5 尚未发布，所以直接改写迁移是安全的（已部署环境需要一条检查 `pg_index.indisvalid` 的修复迁移）。这条索引同时服务 `/api/stations/status` 的采集时间窗口（见第 2 节）与保留策略，两处都是 `requested_at` 范围扫描。
-- 集成测试 `AvailabilityIndexMigrationTest` 在真实 PostgreSQL 上把 V5 的建索引语句连续执行两次，断言最终恰好一个 `indisvalid` 索引（IT 的普通建索引版本覆盖不到并发路径，但能覆盖「遗留同名索引 → 重跑」这一行为）。
+- 集成测试 `AvailabilityIndexMigrationTest` 先在真实 PostgreSQL 上**制造一个真实的 INVALID 索引**（对含重复值的探针表执行 `CREATE UNIQUE INDEX CONCURRENTLY`，校验阶段失败并留下 `indisvalid=false` 的同名索引），再执行 V5 语句，断言重建后恰好一个索引、`indisvalid=true` 且挂在 `availability` 上。去掉保护性的 DROP 后该测试会失败（已用变异验证）。
 - 同一迁移删除 `ix_availability_number`：它是 V4 复合索引 `(number, "timestamp" DESC, id DESC)` 的最左前缀，`WHERE number = ?` 与 FK 检查都由复合索引承担，单列索引只增加每天 3.3 万次插入的写放大。
 - `retention.py` 的批次查询加 `ORDER BY requested_at`，让计划稳定走新索引。
 - `main_scraper.py` 改为一次 `SELECT` 预取全部站点，替代每轮 115 次 `session.get()`。
@@ -88,7 +89,7 @@
 
 **修复.**
 
-- `JourneyService` 去掉类级事务：两次 repository 读取各自开启短只读事务，随后所有 Google 调用不再持有连接。安全性已核对：`Station` 字段均为 eager，`Availability.station` 是 LAZY 且全流程不访问。
+- `JourneyService` 去掉类级事务：两次读取都是声明式查询方法（不在 `SimpleJpaRepository` 类级只读事务的覆盖范围内），因此只在执行期间借用池化连接，随后所有 Google 调用不再持有连接。安全性已核对：`Station` 字段均为 eager，`Availability.station` 是 LAZY 且全流程不访问。
 - `ChatService.getSessionMessages` 去掉事务（`findById` 自带事务），HTTP 代理在事务之外。
 
 **验证.** `JourneyServiceTest`（8 个用例）与 `ChatServiceTest` 全部通过；并发压测下连接占用时间应显著下降。
@@ -174,7 +175,7 @@ cd scraper && <python> -m pytest -q
 cd frontend && npm test && npm run lint && npm run build
 ```
 
-本次执行结果：backend **187 passed**（`mvn test`，其中 **21 个**是 Testcontainers PostgreSQL 17 集成测试，日志可见 `Migrating schema to version 5`；按 CI 口径只跑单测为 **166**）、chat-service **35 passed / 1 skipped**、scraper **5 passed**、frontend **31 passed**；`mvn -o -DskipTests verify`（Checkstyle + SpotBugs）与 `npm run lint` 均通过。
+本次执行结果：backend **187 passed**（`mvn test`，其中 **21 个**是 Testcontainers PostgreSQL 17 集成测试，日志可见 `Migrating schema to version 5`；按 CI 口径只跑单测为 **166**）、chat-service **36 passed / 1 skipped**、scraper **5 passed**、frontend **31 passed**；`mvn -o -DskipTests verify`（Checkstyle + SpotBugs）与 `npm run lint` 均通过。
 
 补充的人工核对：
 
