@@ -760,3 +760,32 @@ def test_lifespan_disposes_databases_when_the_context_raises():
             asyncio.run(run())
 
     assert disposed == ["error"]
+
+
+def test_lifespan_disposes_databases_when_cancelled_during_warmup():
+    import main
+
+    disposed: list[str] = []
+    configured = Settings(
+        _env_file=None,
+        CHAT_DB_URL="postgresql://user:pass@localhost:5432/chat",
+        DEEPSEEK_API_KEY="test-key",
+    )
+
+    async def cancelled_warmup(*_args, **_kwargs):
+        raise asyncio.CancelledError()
+
+    with (
+        patch.object(main, "get_settings", return_value=configured),
+        patch.object(main, "run_in_threadpool", cancelled_warmup),
+        patch.object(main, "_dispose_databases", lambda: disposed.append("cancelled")),
+    ):
+
+        async def run() -> None:
+            async with main._lifespan(main.app):
+                pass
+
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(run())
+
+    assert disposed == ["cancelled"]

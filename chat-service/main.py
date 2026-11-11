@@ -279,18 +279,20 @@ def _dispose_databases() -> None:
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     settings = get_settings()
-    if settings.is_configured:
-        try:
-            await run_in_threadpool(_warmup_databases, settings)
-        except Exception:
-            logger.warning("chat-service database warmup failed", exc_info=True)
     try:
+        if settings.is_configured:
+            try:
+                await run_in_threadpool(_warmup_databases, settings)
+            except Exception:
+                # Warmup is best-effort; a real cancellation (BaseException) is not caught
+                # here and still reaches the finally below.
+                logger.warning("chat-service database warmup failed", exc_info=True)
         yield
     finally:
         # Runs on normal shutdown, on an exception raised into the context, and on
-        # cancellation. Deliberately synchronous: awaiting inside a cancelled task raises
-        # CancelledError again before the pools are closed, and dispose()/close() are fast
-        # shutdown-only calls.
+        # cancellation (including a cancel during warmup). Deliberately synchronous:
+        # awaiting inside a cancelled task raises CancelledError again before the pools are
+        # closed, and dispose()/close() are fast shutdown-only calls.
         try:
             _dispose_databases()
         except Exception:
