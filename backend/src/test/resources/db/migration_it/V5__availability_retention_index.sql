@@ -9,5 +9,9 @@
 -- the V4 IT variant).
 DROP INDEX IF EXISTS ix_availability_number;
 
+-- Drop first so a previously created (or partially built) index of the same
+-- name cannot make IF NOT EXISTS skip the rebuild.
+DROP INDEX IF EXISTS ix_availability_requested_at;
+
 CREATE INDEX IF NOT EXISTS ix_availability_requested_at
     ON availability (requested_at);
