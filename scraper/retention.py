@@ -49,6 +49,9 @@ def delete_old_availability(retention_days: int | None = None) -> int:
             batch_ids = session.scalars(
                 select(Availability.id)
                 .where(Availability.requested_at < cutoff)
+                # Ordered so PostgreSQL walks ix_availability_requested_at (V5)
+                # instead of planning a sequential scan for every batch.
+                .order_by(Availability.requested_at)
                 .limit(_DELETE_BATCH_SIZE)
             ).all()
             if not batch_ids:

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import time
 
+from sqlalchemy import select
+
 from config import RETRY_INTERVAL_SECONDS, SCRAPE_INTERVAL_SECONDS, WEATHER_SCRAPE_INTERVAL_SECONDS
 from database import SessionLocal
 from fetch_stations import fetch_stations
@@ -43,10 +45,14 @@ def scrape_stations():
 
     session = SessionLocal()
     try:
+        # One query for the ~115 rows instead of a session.get() round trip per station.
+        stations_by_number = {
+            station.number: station for station in session.scalars(select(Station))
+        }
         new_stations = 0
         for item in data:
             # --- Step 1: Process Station (static data) ---
-            station = session.get(Station, item["number"])
+            station = stations_by_number.get(item["number"])
 
             if not station:
                 new_stations += 1
@@ -62,6 +68,7 @@ def scrape_stations():
                     bike_stands=item["bike_stands"],
                 )
                 session.add(station)
+                stations_by_number[station.number] = station
             else:
                 # Keep static metadata in sync with the upstream API. Without this,
                 # mutable fields (notably bike_stands = capacity) freeze at first sight
