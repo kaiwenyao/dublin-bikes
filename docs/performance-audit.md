@@ -39,10 +39,10 @@
 
 - 新增 `_sqlalchemy_engines` + 双检锁（与既有 `_db_pools` 同一写法），按 URL 复用 `create_engine(...)`，池大小固定为 2 + 3。
 - 新增 `_repair_sslmode()`，被 `_psycopg_conninfo()`（去掉 `+psycopg`）与新的 `_sqlalchemy_url()`（保留驱动后缀）共用。
-- `_memory()` 传入共享 Engine；新增 FastAPI `lifespan`，启动时预热、关闭时 `dispose()` 所有 Engine 并 `close()` 所有 psycopg 池。
+- `_memory()` 传入共享 Engine；新增 FastAPI `lifespan`，启动时预热；`yield` 包在 `try/finally` 中，关闭时（正常退出、异常退出、取消）都会 `dispose()` 所有 Engine 并 `close()` 所有 psycopg 池——清理逻辑保持同步，避免取消场景下 `await` 再次抛 `CancelledError` 而跳过释放。
 - `requirements.txt` 显式声明 `SQLAlchemy`（此前只是 `langchain-community` 的传递依赖）。
 
-**验证.** `test_sqlalchemy_engine_is_lazy_and_cached_per_url`、`test_memory_reuses_shared_engine`；运行期可用 `pg_stat_activity` 观察 `application_name='chat-service'` 的连接数不随消息数增长。
+**验证.** `test_sqlalchemy_engine_is_lazy_and_cached_per_url`、`test_memory_reuses_shared_engine`；`test_lifespan_disposes_databases_on_normal_shutdown` 与 `..._when_the_context_raises` 分别在正常退出、异常注入两种路径断言清理被执行。运行期可用 `pg_stat_activity` 观察 `application_name='chat-service'` 的连接数不随消息数增长。
 
 ---
 
@@ -54,11 +54,13 @@
 
 **修复.**
 
-- 删除无过滤的 `findLatestPerStation()`，只保留 `findLatestPerStationSince(since)`。
+- 删除无过滤的 `findLatestPerStation()`；窗口查询拆成两个，语义不同：
+  - `findLatestPerStationSince(since)` 按 `timestamp`（JCDecaux `last_update`，数据生成时间）过滤，仍供 `JourneyService` 使用——行程规划不该推荐上游数据已经过期的站点。
+  - `findLatestPerStationScrapedSince(since)` 按 `requested_at`（采集时间）过滤，供 `/status` 使用。两个字段的时间含义见 `scraper/main_scraper.py`：`timestamp = last_update`、`requested_at = utc_now()`。
 - `StationService` 使用 `LATEST_WINDOW_HOURS = 24`（≈33k 行）作为窗口。
-- 行为变化：超过 24h 没有任何采集记录的站点不再出现在 `/status`。前端本来就有"无状态 → 灰色标记 / `--`"的兜底；采集器每 5 分钟写全量，只有在采集器整体停摆一天时才会触发。
+- 行为变化：只有"采集器 24h 没有为这个站点写入任何行"时，站点才会从 `/status` 消失（前端本来就有"无状态 → 灰色标记 / `--`"的兜底）。站点即使上游 `last_update` 冻结数天（停运检修、坏桩、上游接口卡住），只要仍在被采集就继续上报——这正是 `timestamp` 过滤会误伤、而 `requested_at` 过滤不会的场景。
 
-**验证.** `AvailabilityRepositoryTest` 三个用例改走 `findLatestPerStationSince`（含"同一 timestamp 写两次只返回一行"的语义）；`StationServiceTest` 用 `ArgumentCaptor` 断言窗口约为 24h。线上可用 `EXPLAIN (ANALYZE, BUFFERS)` 确认扫描行数从 ~1M 降到 ~33k。
+**验证.** `AvailabilityRepositoryTest`：`findLatestPerStationSince` 的 3 个用例（含"同一 timestamp 写两次只返回一行"）+ 新增 `findLatestPerStationScrapedSince_keepsStationWhoseUpstreamTimestampIsStale`（旧 `timestamp` + 新 `requested_at` 必须保留）与 `_dropsStationWithoutRecentScrapes`；集成测试 `StationRestIntegrationTest#getStatus_keepsStationWhoseUpstreamTimestampIsStaleButScrapeIsRecent` 端到端覆盖该语义。`StationServiceTest` 用 `ArgumentCaptor` 断言窗口约为 24h 且走的是采集时间查询。线上可用 `EXPLAIN (ANALYZE, BUFFERS)` 确认扫描行数从 ~1M 降到 ~33k。
 
 ---
 
@@ -68,7 +70,7 @@
 
 **修复.**
 
-- 新增 Flyway `V5__availability_retention_index.sql`：`CREATE INDEX CONCURRENTLY ix_availability_requested_at`（并同步了 IT 版本，按 V4 的既有约定去掉 `CONCURRENTLY`）。
+- 新增 Flyway `V5__availability_retention_index.sql`：`CREATE INDEX CONCURRENTLY ix_availability_requested_at`（并同步了 IT 版本，按 V4 的既有约定去掉 `CONCURRENTLY`）。这条索引同时服务 `/api/stations/status` 的采集时间窗口（见第 2 节）与保留策略，两处都是 `requested_at` 范围扫描。
 - 同一迁移删除 `ix_availability_number`：它是 V4 复合索引 `(number, "timestamp" DESC, id DESC)` 的最左前缀，`WHERE number = ?` 与 FK 检查都由复合索引承担，单列索引只增加每天 3.3 万次插入的写放大。
 - `retention.py` 的批次查询加 `ORDER BY requested_at`，让计划稳定走新索引。
 - `main_scraper.py` 改为一次 `SELECT` 预取全部站点，替代每轮 115 次 `session.get()`。
@@ -132,9 +134,10 @@
 
 - 新增 `src/lib/stream-batcher.ts`：50ms 定时器合并 chunk（用定时器而非 `requestAnimationFrame`，因为 `openWhenHidden: true` 时后台标签页 rAF 不触发）。
 - `Chat.tsx` 接入：`[DONE]`/`onDone`/abort 先 `flush()`，真错误 `cancel()`（避免把残余文本追加到错误提示后面），`finally` 兜底 flush。
+- **停止生成的竞态**：缓冲期内点"停止"时，assistant 气泡在已渲染内容上仍是空的，旧的清理逻辑会把气泡连同首段内容一起删掉。现在 `Chat.tsx` 用 `activeBatcherRef` 保存当前 batcher，`handleStopGeneration` **先同步 `flush()` 再做空气泡清理**；两个 `setMessages` 都是函数式更新，React 按入队顺序执行，因此清理一定能看到刚刷入的文本。消息列表的追加/清理逻辑抽到 `src/lib/chat-messages.ts` 以便测试。
 - `ChatMessageContent` 用 `memo` 包裹（props 只有一个字符串），历史消息不再重解析。
 
-**验证.** `frontend/tests/stream-batcher.test.mjs`（5 个用例）+ 既有 19 个前端测试全部通过；`npm run build` 通过。
+**验证.** `stream-batcher.test.mjs`（5 个用例）+ `chat-stream-stop.test.mjs`（4 个用例，覆盖"缓冲中停止"与"先删后刷会丢文本"两种顺序）+ 既有前端用例全部通过；`npm run build` 通过。
 
 ---
 
@@ -151,7 +154,7 @@
 ## 9. 验证方式
 
 ```bash
-# backend（183 个单测；checkstyle 在 validate 阶段）
+# backend（186 个单测；checkstyle 在 validate 阶段）
 cd backend && mvn -o test
 
 # backend 集成测试（需要 Docker + Testcontainers；会执行 V5 迁移）
@@ -168,7 +171,7 @@ cd scraper && <python> -m pytest -q
 cd frontend && npm test && npm run lint && npm run build
 ```
 
-本次执行结果：backend **183 单测** + **19 个集成测试**（Testcontainers PostgreSQL 17，日志可见 `Migrating schema to version 5`）、chat-service **32 passed / 1 skipped**、scraper **5 passed**、frontend **24 passed**；`mvn -o -DskipTests verify`（Checkstyle + SpotBugs）与 `npm run lint` 均通过。
+本次执行结果：backend **186 单测** + **20 个集成测试**（Testcontainers PostgreSQL 17，日志可见 `Migrating schema to version 5`）、chat-service **34 passed / 1 skipped**、scraper **5 passed**、frontend **28 passed**；`mvn -o -DskipTests verify`（Checkstyle + SpotBugs）与 `npm run lint` 均通过。
 
 补充的人工核对：
 
