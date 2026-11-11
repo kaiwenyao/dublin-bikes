@@ -7,7 +7,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import java.util.concurrent.CompletableFuture;
+import java.io.IOException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -55,16 +55,16 @@ class SecurityAsyncDispatchIntegrationTest {
     @RestController
     static class TestSseController {
         @PostMapping(path = "/api/chat/test-async-dispatch", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-        SseEmitter stream() {
+        SseEmitter stream() throws IOException {
             SseEmitter emitter = new SseEmitter(3000L);
-            CompletableFuture.runAsync(() -> {
-                try {
-                    emitter.send(SseEmitter.event().data("ok"));
-                    emitter.complete();
-                } catch (Exception ex) {
-                    emitter.completeWithError(ex);
-                }
-            });
+            // Send before returning so the event is buffered in
+            // ResponseBodyEmitter.earlySendAttempts and flushed by initialize() on the
+            // servlet thread. Sending from a CompletableFuture thread races
+            // MockHttpServletResponse's header map with that flush (it is not
+            // thread-safe), which made this test fail intermittently under load.
+            // The async dispatch and its security re-check below are unchanged.
+            emitter.send(SseEmitter.event().data("ok"));
+            emitter.complete();
             return emitter;
         }
     }
