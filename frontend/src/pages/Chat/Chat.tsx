@@ -14,8 +14,9 @@ import { getMeAPI } from '@/api/user'
 import { ChatMessageContent } from '@/components/chat/ChatMessageContent'
 import { ChatThinkingIndicator } from '@/components/chat/ChatThinkingIndicator'
 import { Button } from '@/components/ui/button'
+import { appendToAssistant, dropTrailingEmptyAssistant } from '@/lib/chat-messages'
 import { needsCurrentLocation } from '@/lib/chat-location-intent'
-import { createStreamBatcher } from '@/lib/stream-batcher'
+import { createStreamBatcher, type StreamBatcher } from '@/lib/stream-batcher'
 import { toast } from 'sonner'
 
 type Role = 'user' | 'assistant'
@@ -293,6 +294,8 @@ export default function Chat() {
   const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false)
   const deleteDialogRef = useRef<HTMLDialogElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  // Active stream buffer, so a stop click can flush it before the empty-bubble check.
+  const activeBatcherRef = useRef<StreamBatcher | null>(null)
   const messageListRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const chatIdSuffixRef = useRef<string>('')
@@ -414,6 +417,8 @@ export default function Chat() {
       isMountedRef.current = false
       abortRef.current?.abort()
       abortRef.current = null
+      activeBatcherRef.current?.cancel()
+      activeBatcherRef.current = null
       submitLockRef.current = false
       sendingRef.current = false
       setSending(false)
@@ -444,6 +449,9 @@ export default function Chat() {
     submitLockRef.current = false
     sendingRef.current = false
     abortRef.current = null
+    // Any text still buffered belongs to a request we are abandoning.
+    activeBatcherRef.current?.cancel()
+    activeBatcherRef.current = null
   }
 
   const finishSending = () => {
@@ -551,14 +559,13 @@ export default function Chat() {
 
   const handleStopGeneration = () => {
     abortRef.current?.abort()
+    // Chunks are buffered for up to 50 ms, so the first piece of text may still be in the
+    // batcher. Flush it into the message *before* the empty-bubble check below (both are
+    // queued functional updates and React applies them in order), otherwise stopping right
+    // after the first chunk would delete the bubble and lose that text for good.
+    activeBatcherRef.current?.flush()
     // Drop a trailing empty assistant bubble if the user stopped before any text arrived.
-    setMessages((prev) => {
-      const last = prev[prev.length - 1]
-      if (last && last.role === 'assistant' && last.content.trim() === '') {
-        return prev.slice(0, -1)
-      }
-      return prev
-    })
+    setMessages((prev) => dropTrailingEmptyAssistant(prev))
     finishSending()
   }
 
@@ -622,11 +629,7 @@ export default function Chat() {
     // Every update re-renders the thread and re-parses the streaming Markdown, so
     // per-token updates made long answers quadratic.
     const streamBatcher = createStreamBatcher((chunkText) => {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId ? { ...m, content: m.content + chunkText } : m
-        )
-      )
+      setMessages((prev) => appendToAssistant(prev, assistantId, chunkText))
       if (stickToBottomRef.current && document.visibilityState === 'visible') {
         requestAnimationFrame(() => {
           const el = messageListRef.current
@@ -634,6 +637,7 @@ export default function Chat() {
         })
       }
     })
+    activeBatcherRef.current = streamBatcher
 
     let resolvedChatId: string
     try {
