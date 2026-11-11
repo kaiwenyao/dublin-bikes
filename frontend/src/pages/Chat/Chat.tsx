@@ -15,6 +15,7 @@ import { ChatMessageContent } from '@/components/chat/ChatMessageContent'
 import { ChatThinkingIndicator } from '@/components/chat/ChatThinkingIndicator'
 import { Button } from '@/components/ui/button'
 import { appendToAssistant, dropTrailingEmptyAssistant } from '@/lib/chat-messages'
+import { releaseRequest } from '@/lib/chat-request'
 import { needsCurrentLocation } from '@/lib/chat-location-intent'
 import { createStreamBatcher, type StreamBatcher } from '@/lib/stream-batcher'
 import { toast } from 'sonner'
@@ -639,17 +640,31 @@ export default function Chat() {
     })
     activeBatcherRef.current = streamBatcher
 
+    /**
+     * Settle *this* request. A request that has been superseded (e.g. it was
+     * stopped while waiting for geolocation and the user already sent another
+     * message) must not touch the page-wide sending state or the newer
+     * request's buffer — it may only drop its own.
+     */
+    const finishOwnRequest = () => {
+      if (releaseRequest(abortRef.current, controller, streamBatcher) === 'superseded') {
+        return
+      }
+      setSending(false)
+      releaseSubmitLock()
+    }
+
     let resolvedChatId: string
     try {
       resolvedChatId = await ensureChatId()
     } catch {
       rollbackOptimisticMessages()
-      finishSending()
+      finishOwnRequest()
       return
     }
     if (controller.signal.aborted || !isMountedRef.current) {
       rollbackOptimisticMessages()
-      finishSending()
+      finishOwnRequest()
       return
     }
 
@@ -659,7 +674,7 @@ export default function Chat() {
         : undefined
       if (controller.signal.aborted || !isMountedRef.current) {
         rollbackOptimisticMessages()
-        finishSending()
+        finishOwnRequest()
         return
       }
 
@@ -673,7 +688,7 @@ export default function Chat() {
           const trimmed = chunk.trim()
           if (trimmed === '[DONE]' || trimmed === '"[DONE]"') {
             streamBatcher.flush()
-            finishSending()
+            finishOwnRequest()
             return
           }
           const part = parseStreamChunk(chunk)
@@ -682,7 +697,7 @@ export default function Chat() {
         },
         onDone() {
           streamBatcher.flush()
-          finishSending()
+          finishOwnRequest()
           if (controller.signal.aborted) return
           void loadSessions({ silent: true, activeChatId: resolvedChatId })
         },
@@ -690,7 +705,7 @@ export default function Chat() {
           if (controller.signal.aborted || isAbortLikeError(err)) {
             // Keep whatever text already arrived (previous behaviour), then stop.
             streamBatcher.flush()
-            finishSending()
+            finishOwnRequest()
             return
           }
           // Drop buffered text: it would otherwise be appended after the error line.
@@ -712,7 +727,7 @@ export default function Chat() {
       // No-op once [DONE]/onDone/onError already flushed; guarantees the last
       // buffered tokens are rendered when the stream ends any other way.
       streamBatcher.flush()
-      finishSending()
+      finishOwnRequest()
     }
   }
 
