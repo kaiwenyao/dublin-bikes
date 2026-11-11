@@ -2,6 +2,8 @@ package dev.kaiwen.bikes.config;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.util.concurrent.Executor;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -25,9 +27,12 @@ public class PredictionServiceConfig {
     }
 
     @Bean
-    RestClient predictionServiceRestClient(PredictionServiceProperties properties) {
+    RestClient predictionServiceRestClient(
+            PredictionServiceProperties properties,
+            @Qualifier(HttpClientConfig.HTTP_BODY_EXECUTOR) Executor httpBodyExecutor) {
         JdkClientHttpRequestFactory factory =
-                new JdkClientHttpRequestFactory(predictionServiceHttpClient(properties));
+                new JdkClientHttpRequestFactory(
+                        predictionServiceHttpClient(properties), httpBodyExecutor);
         factory.setReadTimeout(Duration.ofMillis(properties.readTimeoutMs()));
         return RestClient.builder()
                 .baseUrl(properties.baseUrl())

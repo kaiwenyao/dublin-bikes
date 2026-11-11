@@ -2,6 +2,8 @@ package dev.kaiwen.bikes.config;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.util.concurrent.Executor;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -30,18 +32,24 @@ public class ChatServiceConfig {
     }
 
     @Bean
-    RestClient chatServiceRestClient(ChatServiceProperties properties) {
-        return buildRestClient(properties, properties.readTimeoutMs());
+    RestClient chatServiceRestClient(
+            ChatServiceProperties properties,
+            @Qualifier(HttpClientConfig.HTTP_BODY_EXECUTOR) Executor httpBodyExecutor) {
+        return buildRestClient(properties, properties.readTimeoutMs(), httpBodyExecutor);
     }
 
     @Bean
-    RestClient chatServiceTitleRestClient(ChatServiceProperties properties) {
-        return buildRestClient(properties, properties.titleTimeoutMs());
+    RestClient chatServiceTitleRestClient(
+            ChatServiceProperties properties,
+            @Qualifier(HttpClientConfig.HTTP_BODY_EXECUTOR) Executor httpBodyExecutor) {
+        return buildRestClient(properties, properties.titleTimeoutMs(), httpBodyExecutor);
     }
 
-    private RestClient buildRestClient(ChatServiceProperties properties, int readTimeoutMs) {
+    private RestClient buildRestClient(
+            ChatServiceProperties properties, int readTimeoutMs, Executor httpBodyExecutor) {
         JdkClientHttpRequestFactory factory =
-                new JdkClientHttpRequestFactory(chatServiceHttpClient(properties));
+                new JdkClientHttpRequestFactory(
+                        chatServiceHttpClient(properties), httpBodyExecutor);
         factory.setReadTimeout(Duration.ofMillis(readTimeoutMs));
         return RestClient.builder()
                 .baseUrl(properties.baseUrl())
