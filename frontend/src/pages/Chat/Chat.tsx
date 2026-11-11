@@ -15,6 +15,7 @@ import { ChatMessageContent } from '@/components/chat/ChatMessageContent'
 import { ChatThinkingIndicator } from '@/components/chat/ChatThinkingIndicator'
 import { Button } from '@/components/ui/button'
 import { needsCurrentLocation } from '@/lib/chat-location-intent'
+import { createStreamBatcher } from '@/lib/stream-batcher'
 import { toast } from 'sonner'
 
 type Role = 'user' | 'assistant'
@@ -617,6 +618,23 @@ export default function Chat() {
       )
     }
 
+    // Coalesce token chunks: one state update per ~50 ms instead of one per token.
+    // Every update re-renders the thread and re-parses the streaming Markdown, so
+    // per-token updates made long answers quadratic.
+    const streamBatcher = createStreamBatcher((chunkText) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId ? { ...m, content: m.content + chunkText } : m
+        )
+      )
+      if (stickToBottomRef.current && document.visibilityState === 'visible') {
+        requestAnimationFrame(() => {
+          const el = messageListRef.current
+          if (el) el.scrollTop = el.scrollHeight
+        })
+      }
+    })
+
     let resolvedChatId: string
     try {
       resolvedChatId = await ensureChatId()
@@ -650,33 +668,29 @@ export default function Chat() {
           if (controller.signal.aborted) return
           const trimmed = chunk.trim()
           if (trimmed === '[DONE]' || trimmed === '"[DONE]"') {
+            streamBatcher.flush()
             finishSending()
             return
           }
           const part = parseStreamChunk(chunk)
           if (!part) return
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantId ? { ...m, content: m.content + part } : m
-            )
-          )
-          if (stickToBottomRef.current && document.visibilityState === 'visible') {
-            requestAnimationFrame(() => {
-              const el = messageListRef.current
-              if (el) el.scrollTop = el.scrollHeight
-            })
-          }
+          streamBatcher.push(part)
         },
         onDone() {
+          streamBatcher.flush()
           finishSending()
           if (controller.signal.aborted) return
           void loadSessions({ silent: true, activeChatId: resolvedChatId })
         },
         onError(err) {
           if (controller.signal.aborted || isAbortLikeError(err)) {
+            // Keep whatever text already arrived (previous behaviour), then stop.
+            streamBatcher.flush()
             finishSending()
             return
           }
+          // Drop buffered text: it would otherwise be appended after the error line.
+          streamBatcher.cancel()
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId ? { ...m, content: `[Request failed] ${err.message}` } : m
@@ -691,6 +705,9 @@ export default function Chat() {
       // rejects (and consumes the internal retry signal itself), so handling
       // the error again here would duplicate the toast and state update.
     } finally {
+      // No-op once [DONE]/onDone/onError already flushed; guarantees the last
+      // buffered tokens are rendered when the stream ends any other way.
+      streamBatcher.flush()
       finishSending()
     }
   }

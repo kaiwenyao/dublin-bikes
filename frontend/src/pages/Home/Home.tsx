@@ -1,16 +1,27 @@
 import { Link } from 'react-router-dom'
-import coverImg from '@/assets/img/cover.png'
+import coverWebp from '@/assets/img/cover.webp'
+import coverPng from '@/assets/img/cover.png'
 
 export default function Home() {
   return (
     <section className="relative min-h-screen w-full overflow-hidden">
-      {/* Background Image */}
-      <img
-        src={coverImg}
-        alt="City by bike"
-        className="absolute inset-0 h-full w-full object-cover"
-        draggable={false}
-      />
+      {/*
+        Background image (the page LCP element). WebP is ~10x smaller than the PNG
+        (123 KB vs 1.2 MB at the same 1024x686), with the PNG kept as a fallback.
+      */}
+      <picture>
+        <source srcSet={coverWebp} type="image/webp" />
+        <img
+          src={coverPng}
+          alt="City by bike"
+          width={1024}
+          height={686}
+          fetchPriority="high"
+          decoding="async"
+          className="absolute inset-0 h-full w-full object-cover"
+          draggable={false}
+        />
+      </picture>
 
       {/* Gradient Overlay */}
       <div

@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { Components } from 'react-markdown'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -58,7 +59,7 @@ interface ChatMessageContentProps {
   content: string
 }
 
-export function ChatMessageContent({ content }: ChatMessageContentProps) {
+function ChatMessageContentImpl({ content }: ChatMessageContentProps) {
   if (!content) {
     return <span className="text-sm leading-relaxed break-words text-foreground">{'\u00A0'}</span>
   }
@@ -71,3 +72,10 @@ export function ChatMessageContent({ content }: ChatMessageContentProps) {
     </div>
   )
 }
+
+/**
+ * Memoized on `content` only. While an answer streams, the thread re-renders on
+ * every batched chunk; without memo every earlier message would re-parse its
+ * Markdown too. With memo only the message being appended to is re-rendered.
+ */
+export const ChatMessageContent = memo(ChatMessageContentImpl)
