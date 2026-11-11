@@ -789,3 +789,77 @@ def test_lifespan_disposes_databases_when_cancelled_during_warmup():
             asyncio.run(run())
 
     assert disposed == ["cancelled"]
+
+
+@pytest.fixture(autouse=True)
+def reset_database_lifecycle():
+    """Keep the process-level shutdown flag from leaking between tests."""
+    import main
+
+    main._db_shutting_down = False
+    yield
+    main._db_shutting_down = False
+
+
+def test_lifespan_cancellation_cannot_register_resources_after_cleanup():
+    """A blocked warmup thread must not create a pool after disposal cleared the registries.
+
+    Cancelling the ``run_in_threadpool`` wait does not stop the worker thread: asyncio delivers
+    CancelledError to the awaiting task immediately, so the lifespan finally disposes while the
+    worker is still blocked. When the worker resumes it must be refused, not register a pool that
+    nobody will ever dispose.
+    """
+    import threading
+
+    import main
+
+    main._sqlalchemy_engines = {}
+    main._db_pools = {}
+
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    late_creation: list[str] = []
+
+    def blocking_warmup(_settings):
+        started.set()
+        release.wait(5)
+        try:
+            main._sqlalchemy_engine("postgresql+psycopg://u:p@localhost:55432/late")
+        except RuntimeError:
+            late_creation.append("refused")
+        else:
+            late_creation.append("created")
+        finally:
+            finished.set()
+
+    configured = Settings(
+        _env_file=None,
+        CHAT_DB_URL="postgresql://user:pass@localhost:5432/chat",
+        DEEPSEEK_API_KEY="test-key",
+    )
+
+    async def scenario() -> None:
+        with (
+            patch.object(main, "get_settings", return_value=configured),
+            patch.object(main, "_warmup_databases", blocking_warmup),
+        ):
+            async with main._lifespan(main.app):
+                pass
+
+    async def drive() -> None:
+        task = asyncio.create_task(scenario())
+        await asyncio.to_thread(started.wait, 5)
+        task.cancel()
+        # Let the lifespan finally run while the warmup worker is still blocked.
+        await asyncio.sleep(0.05)
+        release.set()
+        await asyncio.to_thread(finished.wait, 5)
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(drive())
+
+    assert late_creation, "the blocked warmup worker never resumed"
+    assert main._sqlalchemy_engines == {}, "a pool created after cleanup leaked"
+    assert main._db_pools == {}

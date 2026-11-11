@@ -197,6 +197,12 @@ def _sqlalchemy_url(db_url: str) -> str:
 
 _db_pool_lock = threading.Lock()
 _db_pools: dict[str, ConnectionPool] = {}
+# Set once the lifespan is disposing resources. Cancelling a run_in_threadpool() wait does not
+# stop the worker thread (asyncio delivers CancelledError to the awaiting task immediately), so a
+# warmup thread can still be inside resource creation when cleanup runs. Refusing creation after
+# this flag is set, under the same lock cleanup takes, guarantees nothing is registered after the
+# registries were cleared.
+_db_shutting_down = False
 
 
 def _db_pool(db_url: str) -> ConnectionPool:
@@ -208,6 +214,8 @@ def _db_pool(db_url: str) -> ConnectionPool:
         with _db_pool_lock:
             pool = _db_pools.get(conninfo)
             if pool is None:
+                if _db_shutting_down:
+                    raise RuntimeError("chat-service is shutting down")
                 pool = ConnectionPool(
                     conninfo=conninfo,
                     min_size=DB_POOL_MIN_SIZE,
@@ -245,6 +253,8 @@ def _sqlalchemy_engine(db_url: str) -> Engine:
         with _sqlalchemy_engine_lock:
             engine = _sqlalchemy_engines.get(url)
             if engine is None:
+                if _db_shutting_down:
+                    raise RuntimeError("chat-service is shutting down")
                 engine = create_engine(
                     url,
                     pool_size=SQLALCHEMY_POOL_SIZE,
@@ -258,27 +268,53 @@ def _sqlalchemy_engine(db_url: str) -> Engine:
 
 
 def _warmup_databases(settings: Settings) -> None:
-    """Open the pools once so the first user request does not pay the connect cost."""
-    with _db_connection(settings.chat_db_url) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT 1")
-    with _sqlalchemy_engine(settings.chat_db_url).connect():
-        pass
+    """Open the pools once so the first user request does not pay the connect cost.
+
+    If the lifespan is cancelled mid-warmup the worker thread keeps running (or is resumed after
+    cleanup already disposed everything); the shutdown guard then raises here instead of leaking
+    a pool created after ``_dispose_databases()`` cleared the registries.
+    """
+    try:
+        with _db_connection(settings.chat_db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+        with _sqlalchemy_engine(settings.chat_db_url).connect():
+            pass
+    except RuntimeError:
+        if not _db_shutting_down:
+            raise
+        logger.info("database warmup aborted: resources were disposed while it was running")
+
+
+def _reset_database_lifecycle() -> None:
+    """Re-arm resource creation for a new lifespan (the app can be restarted in-process)."""
+    global _db_shutting_down
+    with _sqlalchemy_engine_lock, _db_pool_lock:
+        _db_shutting_down = False
 
 
 def _dispose_databases() -> None:
-    """Dispose the SQLAlchemy engines and close the psycopg pools on shutdown."""
-    for engine in list(_sqlalchemy_engines.values()):
-        engine.dispose()
-    _sqlalchemy_engines.clear()
-    for pool in list(_db_pools.values()):
-        pool.close()
-    _db_pools.clear()
+    """Dispose the SQLAlchemy engines and close the psycopg pools on shutdown.
+
+    Takes the creation locks so a still-running warmup thread cannot register a pool after the
+    registries are cleared (it either finishes first and is disposed here, or is refused by the
+    shutdown guard).
+    """
+    global _db_shutting_down
+    with _sqlalchemy_engine_lock, _db_pool_lock:
+        _db_shutting_down = True
+        for engine in list(_sqlalchemy_engines.values()):
+            engine.dispose()
+        _sqlalchemy_engines.clear()
+        for pool in list(_db_pools.values()):
+            pool.close()
+        _db_pools.clear()
 
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     settings = get_settings()
+    _reset_database_lifecycle()
     try:
         if settings.is_configured:
             try:
