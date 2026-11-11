@@ -39,7 +39,7 @@
 
 - 新增 `_sqlalchemy_engines` + 双检锁（与既有 `_db_pools` 同一写法），按 URL 复用 `create_engine(...)`，池大小固定为 2 + 3。
 - 新增 `_repair_sslmode()`，被 `_psycopg_conninfo()`（去掉 `+psycopg`）与新的 `_sqlalchemy_url()`（保留驱动后缀）共用。
-- `_memory()` 传入共享 Engine；新增 FastAPI `lifespan`，启动时预热；`yield` 包在 `try/finally` 中，关闭时（正常退出、异常退出、取消）都会 `dispose()` 所有 Engine 并 `close()` 所有 psycopg 池——清理逻辑保持同步，避免取消场景下 `await` 再次抛 `CancelledError` 而跳过释放。
+- `_memory()` 传入共享 Engine；新增 FastAPI `lifespan`：预热与 `yield` 在**同一个** `try/finally` 内，关闭时（正常退出、异常退出、取消，包括预热期间被取消）都会 `dispose()` 所有 Engine 并 `close()` 所有 psycopg 池——清理逻辑保持同步，避免取消场景下 `await` 再次抛 `CancelledError` 而跳过释放。
 - `requirements.txt` 显式声明 `SQLAlchemy`（此前只是 `langchain-community` 的传递依赖）。
 
 **验证.** `test_sqlalchemy_engine_is_lazy_and_cached_per_url`、`test_memory_reuses_shared_engine`；`test_lifespan_disposes_databases_on_normal_shutdown` 与 `..._when_the_context_raises` 分别在正常退出、异常注入两种路径断言清理被执行。运行期可用 `pg_stat_activity` 观察 `application_name='chat-service'` 的连接数不随消息数增长。
@@ -70,7 +70,8 @@
 
 **修复.**
 
-- 新增 Flyway `V5__availability_retention_index.sql`：`CREATE INDEX CONCURRENTLY ix_availability_requested_at`（并同步了 IT 版本，按 V4 的既有约定去掉 `CONCURRENTLY`）。这条索引同时服务 `/api/stations/status` 的采集时间窗口（见第 2 节）与保留策略，两处都是 `requested_at` 范围扫描。
+- 新增 Flyway `V5__availability_retention_index.sql`：先 `DROP INDEX CONCURRENTLY IF EXISTS`，再 `CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_availability_requested_at`（并同步了 IT 版本，按 V4 的既有约定去掉 `CONCURRENTLY`）。先删是必需的：中断的并发建索引会留下同名 **INVALID** 索引，而 `IF NOT EXISTS` 只看名字，重跑会「假成功」并让 retention/`/status` 继续扫表；V5 尚未发布，所以直接改写迁移是安全的（已部署环境需要一条检查 `pg_index.indisvalid` 的修复迁移）。这条索引同时服务 `/api/stations/status` 的采集时间窗口（见第 2 节）与保留策略，两处都是 `requested_at` 范围扫描。
+- 集成测试 `AvailabilityIndexMigrationTest` 在真实 PostgreSQL 上把 V5 的建索引语句连续执行两次，断言最终恰好一个 `indisvalid` 索引（IT 的普通建索引版本覆盖不到并发路径，但能覆盖「遗留同名索引 → 重跑」这一行为）。
 - 同一迁移删除 `ix_availability_number`：它是 V4 复合索引 `(number, "timestamp" DESC, id DESC)` 的最左前缀，`WHERE number = ?` 与 FK 检查都由复合索引承担，单列索引只增加每天 3.3 万次插入的写放大。
 - `retention.py` 的批次查询加 `ORDER BY requested_at`，让计划稳定走新索引。
 - `main_scraper.py` 改为一次 `SELECT` 预取全部站点，替代每轮 115 次 `session.get()`。
@@ -103,6 +104,7 @@
 **修复.**
 
 - `GoogleMapsConfig` / `ChatServiceConfig` / `PredictionServiceConfig` 各暴露一个 `HttpClient` bean（连接超时按上游区分，统一 HTTP/1.1），`RestClient` 改用 `JdkClientHttpRequestFactory` 并设置各自的读超时。
+- 显式传入写 body 的 executor：`JdkClientHttpRequestFactory(HttpClient)` 在未指定 executor 时会回退到 `SimpleAsyncTaskExecutor`，即**每个 POST body 新建一个平台线程**且不限并发（比原来的 `SimpleClientHttpRequestFactory` 是回归）。新增 `HttpClientConfig#httpBodyExecutor`（2~8 线程、队列 64、CallerRuns 背压），三个 factory 共用；SSE 中继走 `HttpClient` 本身，不占这个小池。
 - `ChatService` 通过构造器注入 `@Qualifier("chatServiceHttpClient")` 的共享客户端，SSE 复用同一连接与执行器；请求级 `HttpRequest.timeout(streamTimeoutMs)` 保持不变。
 - 保留 HTTP/1.1：Uvicorn/FastAPI 在 HTTP/2 下会丢弃 `java.net.http.HttpClient` 的 POST body（422）。
 
@@ -154,7 +156,8 @@
 ## 9. 验证方式
 
 ```bash
-# backend（186 个单测；checkstyle 在 validate 阶段）
+# backend（mvn test 跑全部 187 个，含 21 个 Testcontainers 集成测试；
+# CI 用 -Dtest='!dev.kaiwen.bikes.it.**' 只跑 166 个单测；checkstyle 在 validate 阶段）
 cd backend && mvn -o test
 
 # backend 集成测试（需要 Docker + Testcontainers；会执行 V5 迁移）
@@ -171,7 +174,7 @@ cd scraper && <python> -m pytest -q
 cd frontend && npm test && npm run lint && npm run build
 ```
 
-本次执行结果：backend **186 单测** + **20 个集成测试**（Testcontainers PostgreSQL 17，日志可见 `Migrating schema to version 5`）、chat-service **34 passed / 1 skipped**、scraper **5 passed**、frontend **28 passed**；`mvn -o -DskipTests verify`（Checkstyle + SpotBugs）与 `npm run lint` 均通过。
+本次执行结果：backend **187 passed**（`mvn test`，其中 **21 个**是 Testcontainers PostgreSQL 17 集成测试，日志可见 `Migrating schema to version 5`；按 CI 口径只跑单测为 **166**）、chat-service **35 passed / 1 skipped**、scraper **5 passed**、frontend **31 passed**；`mvn -o -DskipTests verify`（Checkstyle + SpotBugs）与 `npm run lint` 均通过。
 
 补充的人工核对：
 
