@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, asynccontextmanager
 from functools import lru_cache
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
@@ -24,6 +24,8 @@ from psycopg import Connection
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
 from sse_starlette.sse import EventSourceResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -35,6 +37,11 @@ DB_POOL_MIN_SIZE = 1
 DB_POOL_MAX_SIZE = 4
 DB_POOL_MAX_IDLE_S = 300  # recycle idle conns before NAT/Supabase reaping
 DB_POOL_CHECKOUT_TIMEOUT_S = 10  # fail a request fast instead of freezing 30s
+# SQLAlchemy pool used by the LangChain message-history Engine. Keep the total
+# (pool_size + max_overflow) small: one Engine is shared by every request, so
+# this is a hard ceiling on chat-service history connections.
+SQLALCHEMY_POOL_SIZE = 2
+SQLALCHEMY_MAX_OVERFLOW = 3
 ASSISTANT_GREETING = (
     "Hi! I'm your Dublin Bikes assistant. Ask me about bike sharing, stations, "
     "or sustainable mobility—or just say hello."
@@ -96,6 +103,12 @@ class Settings(BaseSettings):
         validation_alias="DEEPSEEK_BASE_URL",
     )
     deepseek_model: str = Field(default="deepseek-chat", validation_alias="DEEPSEEK_MODEL")
+    # Upper bound on the conversation history put into each prompt. Tool-call pairs
+    # are kept intact by _window_history.
+    chat_history_max_messages: int = Field(
+        default=20,
+        validation_alias="CHAT_HISTORY_MAX_MESSAGES",
+    )
 
     @property
     def is_configured(self) -> bool:
@@ -140,9 +153,6 @@ class MessageItem(BaseModel):
     content: str
 
 
-app = FastAPI(title="dublin-bikes-chat-service", version="1.0.0")
-
-
 def _require_runtime() -> Settings:
     settings = get_settings()
     if not settings.is_configured:
@@ -153,6 +163,17 @@ def _require_runtime() -> Settings:
     return settings
 
 
+def _repair_sslmode(parsed) -> list[tuple[str, str]]:
+    """Return the URL query with a bare ``?sslmode`` flag repaired to ``require``."""
+    fixed_query: list[tuple[str, str]] = []
+    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+        if key == "sslmode" and value == "":
+            fixed_query.append((key, "require"))
+        else:
+            fixed_query.append((key, value))
+    return fixed_query
+
+
 def _psycopg_conninfo(db_url: str) -> str:
     """Normalize CHAT_DB_URL for the libpq connection pool, not SQLAlchemy.
 
@@ -161,14 +182,17 @@ def _psycopg_conninfo(db_url: str) -> str:
     """
     parsed = urlparse(db_url)
     scheme = parsed.scheme.split("+", 1)[0]  # postgresql+psycopg -> postgresql
-    query = parse_qsl(parsed.query, keep_blank_values=True)
-    fixed_query: list[tuple[str, str]] = []
-    for key, value in query:
-        if key == "sslmode" and value == "":
-            fixed_query.append((key, "require"))
-        else:
-            fixed_query.append((key, value))
-    return urlunparse(parsed._replace(scheme=scheme, query=urlencode(fixed_query)))
+    return urlunparse(parsed._replace(scheme=scheme, query=urlencode(_repair_sslmode(parsed))))
+
+
+def _sqlalchemy_url(db_url: str) -> str:
+    """SQLAlchemy flavour of CHAT_DB_URL: keep the driver suffix, repair sslmode.
+
+    ``SQLChatMessageHistory`` builds a SQLAlchemy Engine from this string, so unlike the libpq
+    conninfo above the ``+psycopg`` driver suffix must survive.
+    """
+    parsed = urlparse(db_url)
+    return urlunparse(parsed._replace(query=urlencode(_repair_sslmode(parsed))))
 
 
 _db_pool_lock = threading.Lock()
@@ -203,6 +227,74 @@ def _db_connection(db_url: str) -> AbstractContextManager[Connection[Any]]:
     return _db_pool(db_url).connection()
 
 
+_sqlalchemy_engine_lock = threading.Lock()
+_sqlalchemy_engines: dict[str, Engine] = {}
+
+
+def _sqlalchemy_engine(db_url: str) -> Engine:
+    """One SQLAlchemy Engine (own pool) per database URL, shared by every request.
+
+    ``SQLChatMessageHistory(connection=<str>)`` calls ``create_engine(url)`` itself, so building
+    a history object per request created a brand-new pool — and a fresh TLS handshake to
+    PostgreSQL — for every chat message, then left that pool behind. Handing it this Engine
+    instead keeps the connection pool bounded and the connections keep-alive.
+    """
+    url = _sqlalchemy_url(db_url)
+    engine = _sqlalchemy_engines.get(url)
+    if engine is None:
+        with _sqlalchemy_engine_lock:
+            engine = _sqlalchemy_engines.get(url)
+            if engine is None:
+                engine = create_engine(
+                    url,
+                    pool_size=SQLALCHEMY_POOL_SIZE,
+                    max_overflow=SQLALCHEMY_MAX_OVERFLOW,
+                    pool_recycle=DB_POOL_MAX_IDLE_S,
+                    pool_pre_ping=True,
+                    pool_timeout=DB_POOL_CHECKOUT_TIMEOUT_S,
+                )
+                _sqlalchemy_engines[url] = engine
+    return engine
+
+
+def _warmup_databases(settings: Settings) -> None:
+    """Open the pools once so the first user request does not pay the connect cost."""
+    with _db_connection(settings.chat_db_url) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+    with _sqlalchemy_engine(settings.chat_db_url).connect():
+        pass
+
+
+def _dispose_databases() -> None:
+    """Dispose the SQLAlchemy engines and close the psycopg pools on shutdown."""
+    for engine in list(_sqlalchemy_engines.values()):
+        engine.dispose()
+    _sqlalchemy_engines.clear()
+    for pool in list(_db_pools.values()):
+        pool.close()
+    _db_pools.clear()
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    settings = get_settings()
+    if settings.is_configured:
+        try:
+            await run_in_threadpool(_warmup_databases, settings)
+        except Exception:
+            logger.warning("chat-service database warmup failed", exc_info=True)
+    yield
+    await run_in_threadpool(_dispose_databases)
+
+
+app = FastAPI(
+    title="dublin-bikes-chat-service",
+    version="1.0.0",
+    lifespan=_lifespan,
+)
+
+
 def _ensure_session_row(session_id: str, user_id: int, settings: Settings) -> None:
     """Upsert sessions row so message_store FK (V2 migration) is satisfied.
 
@@ -224,9 +316,11 @@ def _ensure_session_row(session_id: str, user_id: int, settings: Settings) -> No
 
 
 def _memory(session_id: str, settings: Settings) -> SQLChatMessageHistory:
+    # Shared Engine: passing the URL string here would create (and leak) an Engine + pool
+    # per request. See _sqlalchemy_engine.
     return SQLChatMessageHistory(
         session_id=session_id,
-        connection=settings.chat_db_url,
+        connection=_sqlalchemy_engine(settings.chat_db_url),
     )
 
 
@@ -420,8 +514,29 @@ def _location_system_message(location: GeoLocation | None) -> SystemMessage:
     )
 
 
+def _window_history(history: list[BaseMessage], max_messages: int) -> list[BaseMessage]:
+    """Keep only the most recent messages, without splitting a tool-call round.
+
+    An ``AIMessage`` carrying ``tool_calls`` is always followed by its ``ToolMessage`` replies;
+    starting the window in the middle of such a round sends the API an orphaned ToolMessage,
+    which it rejects. So the start is moved back to the closest ``HumanMessage`` boundary
+    (every tool round belongs to the human turn that triggered it). If no HumanMessage is
+    found the full history is kept rather than producing an invalid prompt.
+    """
+    if max_messages <= 0 or len(history) <= max_messages:
+        return history
+    start = len(history) - max_messages
+    while start > 0 and not isinstance(history[start], HumanMessage):
+        start -= 1
+    return history[start:]
+
+
 def _build_messages(
-    req: ChatRequest, mem: SQLChatMessageHistory, pending: HumanMessage, history: list[BaseMessage] | None = None
+    req: ChatRequest,
+    mem: SQLChatMessageHistory,
+    pending: HumanMessage,
+    history: list[BaseMessage] | None = None,
+    max_history_messages: int | None = None,
 ) -> list[BaseMessage]:
     """Assemble the per-call prompt for the LLM.
 
@@ -432,13 +547,19 @@ def _build_messages(
     Pass ``history`` (pre-fetched off the event loop) to avoid touching the
     sync SQLAlchemy engine from the event loop; defaults to ``mem.messages``
     for direct callers.
+
+    ``max_history_messages`` bounds the prompt (a long conversation otherwise grows
+    linearly in tokens and time-to-first-token on every turn); it defaults to
+    ``CHAT_HISTORY_MAX_MESSAGES`` / 20.
     """
     if history is None:
         history = _history_snapshot(mem)
+    if max_history_messages is None:
+        max_history_messages = get_settings().chat_history_max_messages
     return [
         _location_system_message(req.location),
         AIMessage(content=ASSISTANT_GREETING),
-        *history,
+        *_window_history(history, max_history_messages),
         pending,
     ]
 
@@ -484,7 +605,13 @@ async def chat_stream(req: ChatRequest) -> EventSourceResponse:
         human_persisted = False
         try:
             history = await _load_history(mem)
-            messages = _build_messages(req, mem, pending, history)
+            messages = _build_messages(
+                req,
+                mem,
+                pending,
+                history,
+                settings.chat_history_max_messages,
+            )
             llm_with_tools = _llm(streaming=True).bind(tools=tools)
             has_tool_observation = False
 

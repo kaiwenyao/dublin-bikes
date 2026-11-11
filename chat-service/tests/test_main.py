@@ -12,6 +12,7 @@ from langchain_core.messages import (
     AIMessageChunk,
     HumanMessage,
     SystemMessage,
+    ToolMessage,
 )
 from pydantic import ValidationError
 
@@ -623,3 +624,101 @@ def test_chat_stream_suppresses_tool_round_content(
     ai = mem.add_message.call_args_list[1][0][0]
     assert isinstance(ai, AIMessage)
     assert ai.content == "Nearest station has bikes."
+
+
+def test_sqlalchemy_url_keeps_driver_and_repairs_blank_sslmode():
+    import main
+
+    assert (
+        main._sqlalchemy_url("postgresql+psycopg://u:p@h:5432/db?sslmode")
+        == "postgresql+psycopg://u:p@h:5432/db?sslmode=require"
+    )
+    assert (
+        main._sqlalchemy_url("postgresql+psycopg://u:p@h:5432/db")
+        == "postgresql+psycopg://u:p@h:5432/db"
+    )
+
+
+@patch("main.create_engine")
+def test_sqlalchemy_engine_is_lazy_and_cached_per_url(mock_create_engine):
+    import main
+
+    test_url = "postgresql+psycopg://user:pass@localhost:5432/chat"
+    main._sqlalchemy_engines = {}
+    try:
+        first = main._sqlalchemy_engine(test_url)
+        second = main._sqlalchemy_engine(test_url)
+
+        assert first is second
+        assert mock_create_engine.call_count == 1
+        kwargs = mock_create_engine.call_args.kwargs
+        assert kwargs["pool_size"] == main.SQLALCHEMY_POOL_SIZE
+        assert kwargs["max_overflow"] == main.SQLALCHEMY_MAX_OVERFLOW
+        assert kwargs["pool_pre_ping"] is True
+        assert kwargs["pool_timeout"] == main.DB_POOL_CHECKOUT_TIMEOUT_S
+    finally:
+        main._sqlalchemy_engines = {}
+
+
+@patch("main.SQLChatMessageHistory")
+def test_memory_reuses_shared_engine(mock_history_cls):
+    import main
+
+    engine = object()
+    with patch("main._sqlalchemy_engine", return_value=engine):
+        main._memory("sess-1", _configured_settings())
+
+    assert mock_history_cls.call_args.kwargs["connection"] is engine
+
+
+def test_window_history_returns_everything_when_under_limit():
+    import main
+
+    history = [HumanMessage(content="a"), AIMessage(content="b")]
+    assert main._window_history(history, 20) == history
+
+
+def test_window_history_keeps_the_most_recent_messages():
+    import main
+
+    history = [HumanMessage(content=f"m{i}") for i in range(10)]
+    window = main._window_history(history, 4)
+
+    assert len(window) == 4
+    assert window[-1].content == "m9"
+
+
+def test_window_history_does_not_split_a_tool_call_round():
+    import main
+
+    tool_call = {"name": "get_nearest_station_availability", "args": {}, "id": "call-1"}
+    history = [
+        HumanMessage(content="old-1"),
+        AIMessage(content="old-2"),
+        HumanMessage(content="new-1"),
+        AIMessage(content=""),
+        AIMessage(content="", tool_calls=[tool_call]),
+        ToolMessage(content="{}", tool_call_id="call-1", name="get_nearest_station_availability"),
+        AIMessage(content="done"),
+    ]
+
+    window = main._window_history(history, 2)
+
+    # Backed up from the ToolMessage to the HumanMessage that opened the round.
+    assert window[0] is history[2]
+    assert len(window) == 5
+
+
+def test_build_messages_applies_the_window():
+    import main
+
+    pending = HumanMessage(content="pending")
+    history = [HumanMessage(content=f"h{i}") for i in range(6)]
+    req = ChatRequest(session_id="sess-1", user_id=42, message="pending")
+
+    messages = _build_messages(req, MagicMock(), pending, history, max_history_messages=3)
+
+    # system + greeting + 3 history messages + pending
+    assert len(messages) == 6
+    assert messages[2].content == "h3"
+    assert messages[-1] is pending
